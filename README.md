@@ -10,3 +10,6 @@ First, Yahoo, via opentables/YQL has a plethora of data available. The only thin
 I used Google. 
 
 I added a bit of formatting to the plugin so it displays nicely. 
+
+To come, oil and metal prices. I have not found a reliable XML source that does not look like junk or is not free.
+
