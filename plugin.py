@@ -11,8 +11,6 @@ import string
 
 import urllib
 import urllib2
-
-# for company lookup
 import json
 
 # for millify
@@ -21,8 +19,8 @@ import math
 # for changing symbols
 import re
 
-# Adding some aliases using the Alias plugin is helpful
-# for indicies like:
+# for google stockquote
+from lxml import etree
 
 class Stock(callbacks.Plugin):
     threaded = True
@@ -73,30 +71,41 @@ class Stock(callbacks.Plugin):
 
     def _googlequote(self, symbol):
       """<symbols>
-      Fetch quotes from hidden Google Stock API via YQL. For indicies.
+      Fetch quotes from hidden Google Stock API. For indicies.
       """
 
-      symbol_query = "SELECT * from google.igoogle.stock WHERE stock='%s'" % symbol
-      result = self._yql_query(symbol_query)
-      data = result['xml_api_reply']['finance']
+      url = "http://www.google.com/ig/api?stock=%s" % urllib2.quote(symbol)
 
-      pretty_symbol = data['pretty_symbol']['data']
-      company = data['company']['data']
-      last = data['last']['data']
-      high = data['high']['data']
-      low = data['low']['data']
-      volume = data['volume']['data']
-      change = data['change']['data']
-      perc_change = data['perc_change']['data']
-      trade_timestamp = data['trade_timestamp']['data']
+      try:
+        xml = etree.parse(url)
+      except:
+        irc.reply("Failed to open: %s" % (url))
+        return
+
+      root = xml.getroot()
+      finance = root[0]
+
+      data = dict()
+      for elem in finance:
+        data[elem.tag] = elem.attrib['data']
+
+      pretty_symbol = data['symbol']
+      company = data['company']
+      last = data['last']
+      high = data['high']
+      low = data['low']
+      volume = data['volume']
+      change = data['change']
+      perc_change = data['perc_change']
+      trade_timestamp = data['trade_timestamp']
 
       return pretty_symbol, company, last, high, low, volume, change, perc_change, trade_timestamp
     
     # function to handle google's output so we don't have to repeat.
     def _format_google_output(self, pretty_symbol, company, last, high, low, volume, change, perc_change, trade_timestamp):
       output = ircutils.underline(pretty_symbol) + " (" + ircutils.bold(company) + ")" + " last: " + ircutils.bold(last)
-      output += " Daily range: (" + low + "-" + high + ")"
       output += " " + self._colorify(change) + " (" + self._colorify(perc_change) + ")"
+      output += "  Daily range:(" + low + "-" + high + ")"
       output += "  Volume: " + ircutils.mircColor(self._millify(float(volume)), 'purple')
       output += "  Last trade: " + ircutils.mircColor(trade_timestamp, 'blue')
       return output
@@ -198,7 +207,7 @@ class Stock(callbacks.Plugin):
           result = self._yql_query(stock_query)
           data = result['quote']
 
-          self.log.info(json.dumps(data, indent=4))
+          #self.log.info(json.dumps(data, indent=4))
           
           company = data['Name']
 
@@ -357,7 +366,7 @@ class Stock(callbacks.Plugin):
               if TrailingPE != None:
                 output += ircutils.bold(ircutils.underline("Trailing PE:")) + " " + TrailingPE + " "
               if EarningsGrowth != None:
-                output += ircutils.bold(ircutils.underline("Earnings Growth:")) + " " + EarningsGrowth + " "
+                output += ircutils.bold(ircutils.underline("Earnings Growth:")) + " " + self._colorify(EarningsGrowth) + " "
               if EbitMarge != None:
                 output += ircutils.bold(ircutils.underline("EBIT Margin:")) + " " + EbitMarge + " "
 
