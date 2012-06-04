@@ -25,14 +25,13 @@ from lxml import etree
 class Stock(callbacks.Plugin):
     threaded = True
 
+    # change color of %/last depending on if ↑pos or ↓ neg - other chars ▾/▴ ▲ ▼
+    # http://stackoverflow.com/questions/2701192/ascii-character-for-up-down-triangle-arrow-to-display-in-html
     def _colorify(self, string):
-      # change color of %/last depending on if ↑pos or ↓ neg - other chars ▾/▴ ▲ ▼
-      # http://stackoverflow.com/questions/2701192/ascii-character-for-up-down-triangle-arrow-to-display-in-html
       if float(str(string).replace('%','')) > 0:
         string = ircutils.mircColor(string, 'green').replace('+', u'▴')
       else:
         string = ircutils.mircColor(string, 'red').replace('-', u'↓')
-
       return string
 
     # millify - a very nice/clean function from:
@@ -42,6 +41,7 @@ class Stock(callbacks.Plugin):
       millidx=max(0,min(len(millnames)-1, int(math.floor(math.log10(abs(n))/3.0))))
       return '%.1f%s'%(n/10**(3*millidx),millnames[millidx])
 
+    # input splitter for seperators.
     def _splitinput(self, txt, seps):
       default_sep = seps[0]
       for sep in seps[1:]: 
@@ -89,15 +89,18 @@ class Stock(callbacks.Plugin):
       for elem in finance:
         data[elem.tag] = elem.attrib['data']
 
-      pretty_symbol = data['symbol']
-      company = data['company']
-      last = data['last']
-      high = data['high']
-      low = data['low']
-      volume = data['volume']
-      change = data['change']
-      perc_change = data['perc_change']
-      trade_timestamp = data['trade_timestamp']
+      if data['symbol']:
+        pretty_symbol = data['symbol']
+        company = data['company']
+        last = data['last']
+        high = data['high']
+        low = data['low']
+        volume = data['volume']
+        change = data['change']
+        perc_change = data['perc_change']
+        trade_timestamp = data['trade_timestamp']
+      else:
+        irc.reply("Failed to find data for: %s" % (symbol))
 
       return pretty_symbol, company, last, high, low, volume, change, perc_change, trade_timestamp
     
