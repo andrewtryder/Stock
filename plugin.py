@@ -172,10 +172,13 @@ class Stock(callbacks.Plugin):
         Gets the information about the current price and change from the
         previous day of a given company (represented by a stock symbol).
         Separate multiple SYMBOLs by spaces.
+
+        Options: --fundamentals for fundamentals. --movingaverage for moving averages. --quant for quant options
+        and --extra and --info for more options.
         """
 
         opts = dict(opts)
-        Fundamentals,MovingAverage,Extra, Info = False, False, False, False
+        Fundamentals,MovingAverage,Extra,Info,Quant = False, False, False, False, False
 
         if 'movingaverage' in opts:
           MovingAverage = True
@@ -185,6 +188,8 @@ class Stock(callbacks.Plugin):
           Fundamentals = True
         if 'info' in opts:
           Info = True
+        if 'quant' in opts:
+          Quant = True
 
         symbollist = self._splitinput(symbols, [' ', ','])
 
@@ -192,6 +197,8 @@ class Stock(callbacks.Plugin):
           stock_query = "SELECT * FROM yahoo.finance.quotes where symbol ='%s'" % symbol
           result = self._yql_query(stock_query)
           data = result['quote']
+
+          self.log.info(json.dumps(data, indent=4))
           
           company = data['Name']
 
@@ -211,6 +218,7 @@ class Stock(callbacks.Plugin):
             yearhigh = data['YearHigh']
             yearlow = data['YearLow']
 
+
             # start output
             output = ircutils.underline(symbol) + " (" + ircutils.bold(company) + ")" + " last: " + ircutils.bold(last)
 
@@ -220,14 +228,15 @@ class Stock(callbacks.Plugin):
             # should we display daily high-low? 
             displayDailyHighLow = self.registryValue('displayDailyHighLow', msg.args[0])
             if displayDailyHighLow:
-              output += " Daily range: (" + low + "-" + high + ")"
+              if low != None and high != None:
+                output += " Daily range: (" + low + "-" + high + ")"
 
             # should we display yearly high-low?
             displayYearlyHighLow = self.registryValue('displayYearlyHighLow', msg.args[0])
             if displayYearlyHighLow:
               output += " Yearly range: (" + yearlow + "-" + yearhigh + ")"
 
-            if volume != None:
+            if volume != None and volume != "0":
               output += "  Volume: " + ircutils.mircColor(self._millify(float(volume)), 'purple') 
 
             if market_cap != None:
@@ -326,7 +335,36 @@ class Stock(callbacks.Plugin):
 
               irc.reply(output)
 
-    quote = wrap(quote, [getopts({'extra': '', 'fundamentals': '', 'movingaverage': '', 'info': ''}), ('text')])
+            if Quant:
+              quant_query = "SELECT * from yahoo.finance.quant WHERE symbol='%s'" % symbol
+              quantdata = self._yql_query(quant_query)
+              quantdata = quantdata['stock']
+              ReturnOnEquity = quantdata['ReturnOnEquity']
+              Stockholders = quantdata['Stockholders'].replace(',','')
+              TotalAssets = quantdata['TotalAssets'].replace(',','')
+              TrailingPE = quantdata['TrailingPE']
+              EarningsGrowth = quantdata['EarningsGrowth']
+              EbitMarge = quantdata['EbitMarge']
+
+              output = ircutils.underline(symbol) + " (" + ircutils.bold(company) + ") "
+
+              if ReturnOnEquity != None:
+                output += ircutils.bold(ircutils.underline("Return On Equity:")) + " " + ReturnOnEquity + " "
+              if Stockholders != None:
+                output += ircutils.bold(ircutils.underline("Stockholders:")) + " " + self._millify(float(Stockholders)) + " "
+              if TotalAssets != None:
+                output += ircutils.bold(ircutils.underline("Total Assets:")) + " " + self._millify(float(TotalAssets)) + " "
+              if TrailingPE != None:
+                output += ircutils.bold(ircutils.underline("Trailing PE:")) + " " + TrailingPE + " "
+              if EarningsGrowth != None:
+                output += ircutils.bold(ircutils.underline("Earnings Growth:")) + " " + EarningsGrowth + " "
+              if EbitMarge != None:
+                output += ircutils.bold(ircutils.underline("EBIT Margin:")) + " " + EbitMarge + " "
+
+              irc.reply(output)
+            # done quant
+
+    quote = wrap(quote, [getopts({'extra': '', 'fundamentals': '', 'movingaverage': '', 'info': '', 'quant': ''}), ('text')])
 
     def company(self, irc, msg, args, companyname):
       """<company name>
@@ -339,6 +377,9 @@ class Stock(callbacks.Plugin):
       json_response = str(yahoo_called.read()).replace("YAHOO.Finance.SymbolSuggest.ssCallback(", "").replace(")","")
       response_obj = json.loads(json_response)
       results = response_obj.get("ResultSet").get("Result")
+
+      #output = "{0:12} {1:16} {2:16} {3:16}".format("Symbol", "Name", "Type", "Exchange")
+
       for response in results:
         #if response.get("exch") == "NMS" or response.get("exch") == "NYQ" or response.get("exch") == "ASE":
         #{"symbol":"GLD","name": "SPDR Gold Shares","exch": "PCX","type": "E","typeDisp":"ETF"} 
@@ -347,7 +388,8 @@ class Stock(callbacks.Plugin):
           typeDisp = response.get("typeDisp").encode('utf-8')
           exchDisp = response.get("exch").encode('utf-8')
 
-          irc.reply(symbol + " " + name + " " + typeDisp + " " + exchDisp)
+          output = "{0:9} {1:24} {2:16} {3:16}".format(symbol, name, typeDisp, exchDisp)
+          irc.reply(output)
 
     company = wrap(company, ['text'])
 
