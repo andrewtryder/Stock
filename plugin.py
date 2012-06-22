@@ -1,5 +1,4 @@
 # -*- coding: utf-8 -*-
-# coding=utf8
 
 import supybot.utils as utils
 from supybot.commands import *
@@ -21,6 +20,14 @@ import re
 
 # for google stockquote
 from lxml import etree
+
+# for Yahoo! Financial News
+import feedparser
+
+#libraries for time_created_at
+import time
+from datetime import tzinfo, datetime, timedelta
+
 
 class Stock(callbacks.Plugin):
     threaded = True
@@ -48,6 +55,37 @@ class Stock(callbacks.Plugin):
         txt = txt.replace(sep, default_sep)
       return [i.strip() for i in txt.split(default_sep)]
 
+    # relative_time
+    def _time_created_at(self, s):
+        """
+        returns relative time string from now.
+        """
+
+        plural = lambda n: n > 1 and "s" or ""
+
+        try:
+            ddate = time.strptime(s, "%a, %d %b %Y %H:%M:%S GMT")[:-2]
+        except ValueError:
+            return "", ""
+
+        created_at = datetime(*ddate, tzinfo=None)
+        d = datetime.utcnow() - created_at
+
+        if d.days:
+            rel_time = "%s days ago" % d.days
+        elif d.seconds > 3600:
+            hours = d.seconds / 3600
+            rel_time = "%s hour%s ago" % (hours, plural(hours))
+        elif 60 <= d.seconds < 3600:
+            minutes = d.seconds / 60
+            rel_time = "%s minute%s ago" % (minutes, plural(minutes))
+        elif 30 < d.seconds < 60:
+            rel_time = "less than a minute ago"
+        else:
+            rel_time = "less than %s second%s ago" % (d.seconds, plural(d.seconds))
+        return rel_time
+
+
     # generalized yql query and abstraction idea/code from: http://bit.ly/Ln47gt
     def _yql_query(self, query):
       YQL_URL = "http://query.yahooapis.com/v1/public/yql?"
@@ -62,6 +100,8 @@ class Stock(callbacks.Plugin):
         result = json.loads(string_result)
         if result.has_key('query') and result["query"].has_key('results') and result["query"]["results"] and result["query"]["count"] >= 1:
           return_value = result["query"]["results"]
+        else:
+          self.log.info(result)
       except Exception, err:
         irc.reply(query)
       finally:
@@ -71,7 +111,7 @@ class Stock(callbacks.Plugin):
 
     def _googlequote(self, symbol):
       """<symbols>
-      Fetch quotes from hidden Google Stock API. For indicies.
+      Fetch quotes from hidden Google Stock API. For indices.
       """
 
       url = "http://www.google.com/ig/api?stock=%s" % urllib2.quote(symbol)
@@ -113,20 +153,20 @@ class Stock(callbacks.Plugin):
       output += "  Last trade: " + ircutils.mircColor(trade_timestamp, 'blue')
       return output
     
-    # indicies to cover the indexes
-    def indicies(self, irc, msgs, args):
+    # indices to cover the indexes
+    def indices(self, irc, msgs, args):
       """
-      Displays the three major indicies for the US Stock Market. Dow Jones Industrial Average, NASDAQ, and S&P500
+      Displays the three major indices for the US Stock Market. Dow Jones Industrial Average, NASDAQ, and S&P500
       """
 
-      indicies = ['.DJI','.IXIC','.INX']
+      indices = ['.DJI','.IXIC','.INX']
 
-      for index in indicies:
+      for index in indices:
         pretty_symbol, company, last, high, low, volume, change, perc_change, trade_timestamp = self._googlequote(index)
         output = self._format_google_output(pretty_symbol, company, last, high, low, volume, change, perc_change, trade_timestamp)
         irc.reply(output)
     
-    indicies = wrap(indicies)
+    indices = wrap(indices)
     
     # public frontend to googlequote.
     def googlequote(self, irc, msgs, args, symbols):
@@ -142,6 +182,21 @@ class Stock(callbacks.Plugin):
         irc.reply(output)
 
     googlequote = wrap(googlequote, ['text'])
+
+    def _googleShorten(self, url):
+      """<url>
+      Shorten URL using google.
+      """
+      _gooApi = 'https://www.googleapis.com/urlshortener/v1/url'
+      _headers = {'Content-Type' : 'application/json'}
+      _data = {'longUrl' : utils.web.urlquote(url)}
+
+      request = urllib2.Request(_gooApi,json.dumps(_data),_headers)
+      response = urllib2.urlopen(request)
+      response_data = response.read()
+      shorturi = json.loads(response_data)['id']
+
+      return shorturi
 
     def currency(self, irc, msg, args, currencies):
       """<CURCUR>
@@ -327,15 +382,31 @@ class Stock(callbacks.Plugin):
               company_query = "SELECT * from yahoo.finance.stocks WHERE symbol='%s'" % symbol
               companydata = self._yql_query(company_query)
               companydata = companydata['stock']
-              start = companydata['start']
-              end = companydata['end']
-              sector = companydata['Sector']
-              Industry = companydata['Industry']
-              FTE = companydata['FullTimeEmployees']
+
+              try:
+                start = companydata['start']
+              except:
+                start = None
+              try:
+                end = companydata['end']
+              except:
+                end = None
+              try:
+                sector = companydata['Sector']
+              except:
+                sector = None
+              try:
+                Industry = companydata['Industry']
+              except:
+                Industry = None
+              try:
+                FTE = companydata['FullTimeEmployees']
+              except:
+                FTE = None
 
               if start != None:
                 output = ircutils.underline(symbol) + " (" + ircutils.bold(company) + ") "
-                output += ircutils.bold(ircutils.underline("Started:")) + " " + start + " "
+                output += ircutils.bold(ircutils.underline("IPO:")) + " " + start + " "
               if end != None:
                 output += ircutils.bold(ircutils.underline("End:")) + " " + end + " "
               if sector != None:
@@ -378,6 +449,45 @@ class Stock(callbacks.Plugin):
 
     quote = wrap(quote, [getopts({'extra': '', 'fundamentals': '', 'movingaverage': '', 'info': '', 'quant': ''}), ('text')])
 
+    # metals fetcher.
+    def metals(self, irc, msg, args):
+      """
+      Display the latest metal prices.
+      """
+
+      url = "http://drayah.no.de/metals/latest"
+      metals_called = urllib.urlopen(url)
+      json_response = metals_called.read()
+      response_obj = json.loads(json_response)
+
+      gold = response_obj['gold'].get('quote', None)
+      silver = response_obj['silver'].get('quote', None)
+      platinum = response_obj['platinum'].get('quote', None)
+      palladium = response_obj['palladium'].get('quote', None)
+
+      output = "Current metals prices (USD/oz): "
+
+      if gold != None:
+        output += ircutils.bold(ircutils.underline("Gold:"))
+        output += " " + str(gold) + "  "
+
+      if silver != None:
+        output += ircutils.bold(ircutils.underline("Silver:"))
+        output += " " + str(silver) + "  " 
+      
+      if platinum != None:
+        output += ircutils.bold(ircutils.underline("Platinum:"))
+        output += " " + str(platinum) + "  "
+      
+      if palladium != None:
+        output += ircutils.bold(ircutils.underline("Palladium:"))
+        output += " " + str(palladium) + "  "
+      
+      irc.reply(output)
+
+    metals = wrap(metals)
+
+    # company news
     def company(self, irc, msg, args, companyname):
       """<company name>
       Look up company name for the given stock symbol.
@@ -405,7 +515,48 @@ class Stock(callbacks.Plugin):
 
     company = wrap(company, ['text'])
 
-Class = Stock
+    def companynews(self, irc, msg, args, symbol):
+      """<symbol>
+      Look up the latest news for a given stock symbol.
+      Example: companynews GOOG
+      """
 
+      rss_url = 'http://finance.yahoo.com/rss/headline?s=%s' % symbol
+
+      try:
+        d = feedparser.parse(rss_url)
+      except:
+        self.log.warning('Failed to parse: %s' % (rss_url))
+        irc.reply('Failed to parse: %s' % (rss_url))
+
+      #if len(d.entries)  >= 1:
+      #  self.log.warning('Failed to find any entries in: %s' % (rss_url))
+      #  irc.reply('Failed to find any entries in: %s' % (rss_url))
+      #  return
+
+      entries = d['entries'][0:4] # max five.
+
+      for entry in entries:
+        title = entry['title']
+        description = entry['description']
+
+        # relative time and colorize
+        pubDate = self._time_created_at(entry.published)
+        pubDate = ircutils.mircColor(pubDate, 'light gray')
+
+        # remove redirect, shorten and color.
+        link = re.sub(r'^.*?/\*','',entry['link']).strip() # remove redirect.
+        #link = self._googleShorten(link)
+        link = ircutils.mircColor(link, 'blue')
+
+        output = title
+        output += " " + link
+        output += " " + pubDate
+
+        irc.reply(output)
+
+    companynews = wrap(companynews, ['somethingWithoutSpaces'])
+
+Class = Stock
 
 # vim:set shiftwidth=2 softtabstop=2 expandtab textwidth=350:
