@@ -1,562 +1,388 @@
 # -*- coding: utf-8 -*-
+###
+# Copyright (c) 2013, spline
+# All rights reserved.
+###
 
+# my libs
+import string
+import urllib
+import urllib2
+import json
+import re
+import math # for millify
+# for google stockquote
+try:
+    import xml.etree.cElementTree as ElementTree
+except ImportError:
+    import xml.etree.ElementTree as ElementTree
+
+# supybot libs.
 import supybot.utils as utils
 from supybot.commands import *
 import supybot.plugins as plugins
 import supybot.ircutils as ircutils
 import supybot.callbacks as callbacks
+from supybot.i18n import PluginInternationalization, internationalizeDocstring
 
-import string
+_ = PluginInternationalization('Odds')
 
-import urllib
-import urllib2
-import json
-
-# for millify
-import math
-
-# for changing symbols
-import re
-
-# for google stockquote
-from lxml import etree
-
-# for Yahoo! Financial News
-import feedparser
-
-#libraries for time_created_at
-import time
-from datetime import tzinfo, datetime, timedelta
-
-
+@internationalizeDocstring
 class Stock(callbacks.Plugin):
+    """Display stock and financial information."""
     threaded = True
 
-    # change color of %/last depending on if ↑pos or ↓ neg - other chars ▾/▴ ▲ ▼
-    # http://stackoverflow.com/questions/2701192/ascii-character-for-up-down-triangle-arrow-to-display-in-html
-    def _colorify(self, string):
-      if float(str(string).replace('%','')) > 0:
-        string = ircutils.mircColor(string, 'green').replace('+', u'▴')
-      else:
-        string = ircutils.mircColor(string, 'red').replace('-', u'↓')
-      return string
+    def __init__(self, irc):
+        self.__parent = super(Stock, self)
+        self.__parent.__init__(irc)
 
-    # millify - a very nice/clean function from:
-    # http://stackoverflow.com/questions/3154460/python-human-readable-large-numbers
+    def die(self):
+        self.__parent.die()
+
+    def _colorify(self, s, perc=False):
+        """Change symbol/color depending on if gain is positive or negative."""
+        s = s.replace('%','')
+        if float(s) > 0:
+            if perc:
+                s = self._green(u'▴' + s.replace('+','') + "%")
+            else:
+                s = self._green(u'▴' + s.replace('+',''))
+        elif float(s) < 0:
+            if perc:
+                s = self._red(u'↓' + s.replace('-','') + "%")
+            else:
+                s = self._red(u'↓' + s.replace('-',''))
+        return s
+
     def _millify(self, n):
-      millnames=['','k','M','B','T']
-      millidx=max(0,min(len(millnames)-1, int(math.floor(math.log10(abs(n))/3.0))))
-      return '%.1f%s'%(n/10**(3*millidx),millnames[millidx])
+        """Display human readable numbers."""
+        millnames=['','k','M','B','T']
+        millidx=max(0,min(len(millnames)-1, int(math.floor(math.log10(abs(n))/3.0))))
+        return '%.1f%s'%(n/10**(3*millidx),millnames[millidx])
 
-    # input splitter for seperators.
     def _splitinput(self, txt, seps):
-      default_sep = seps[0]
-      for sep in seps[1:]: 
-        txt = txt.replace(sep, default_sep)
-      return [i.strip() for i in txt.split(default_sep)]
+        """Split input depending on separators."""
+        default_sep = seps[0]
+        for sep in seps[1:]:
+            txt = txt.replace(sep, default_sep)
+        return [i.strip() for i in txt.split(default_sep)]
 
-    # relative_time
-    def _time_created_at(self, s):
-        """
-        returns relative time string from now.
-        """
+    ########################
+    # COLOR AND FORMATTING #
+    ########################
 
-        plural = lambda n: n > 1 and "s" or ""
+    def _red(self, string):
+        """Returns a red string."""
+        return ircutils.mircColor(string, 'red')
 
-        try:
-            ddate = time.strptime(s, "%a, %d %b %Y %H:%M:%S GMT")[:-2]
-        except ValueError:
-            return "", ""
+    def _yellow(self, string):
+        """Returns a yellow string."""
+        return ircutils.mircColor(string, 'yellow')
 
-        created_at = datetime(*ddate, tzinfo=None)
-        d = datetime.utcnow() - created_at
+    def _green(self, string):
+        """Returns a green string."""
+        return ircutils.mircColor(string, 'green')
 
-        if d.days:
-            rel_time = "%s days ago" % d.days
-        elif d.seconds > 3600:
-            hours = d.seconds / 3600
-            rel_time = "%s hour%s ago" % (hours, plural(hours))
-        elif 60 <= d.seconds < 3600:
-            minutes = d.seconds / 60
-            rel_time = "%s minute%s ago" % (minutes, plural(minutes))
-        elif 30 < d.seconds < 60:
-            rel_time = "less than a minute ago"
-        else:
-            rel_time = "less than %s second%s ago" % (d.seconds, plural(d.seconds))
-        return rel_time
+    def _teal(self, string):
+        """Returns a teal string."""
+        return ircutils.mircColor(string, 'teal')
 
+    def _blue(self, string):
+        """Returns a blue string."""
+        return ircutils.mircColor(string, 'blue')
 
-    # generalized yql query and abstraction idea/code from: http://bit.ly/Ln47gt
-    def _yql_query(self, query):
-      YQL_URL = "http://query.yahooapis.com/v1/public/yql?"
-      YQL_PARAMS = {"q":"",
-                    "format":"json",
-                    "env":"store://datatables.org/alltableswithkeys",
-                   }
-      try:
-        YQL_PARAMS["q"] = query
-        params = urllib.urlencode(YQL_PARAMS)
-        string_result = urllib.urlopen(YQL_URL+params).read()
-        result = json.loads(string_result)
-        if result.has_key('query') and result["query"].has_key('results') and result["query"]["results"] and result["query"]["count"] >= 1:
-          return_value = result["query"]["results"]
-        else:
-          self.log.info(result)
-      except Exception, err:
-        irc.reply(query)
-      finally:
-        pass
+    def _orange(self, string):
+        """Returns an orange string."""
+        return ircutils.mircColor(string, 'orange')
 
-      return return_value
+    def _bold(self, string):
+        """Returns a bold string."""
+        return ircutils.bold(string)
+
+    def _ul(self, string):
+        """Returns an underline string."""
+        return ircutils.underline(string)
+
+    def _bu(self, string):
+        """Returns a bold/underline string."""
+        return ircutils.bold(ircutils.underline(string))
+
+    ####################
+    # GOOGLE FUNCTIONS #
+    ####################
 
     def _googlequote(self, symbol):
-      """<symbols>
-      Fetch quotes from hidden Google Stock API. For indices.
-      """
+        """Return quote from Google."""
 
-      url = "http://www.google.com/ig/api?stock=%s" % urllib2.quote(symbol)
+        url = "http://www.google.com/ig/api?stock=%s" % urllib.quote(symbol)
+        try:
+            request = urllib2.Request(url, headers={"Accept" : "application/xml"})
+            u = urllib2.urlopen(request)
+        except Exception, e:
+            self.log.error("Error fetching Google stock quote opening {0} error {1}".format(url, e))
+            return None
 
-      try:
-        xml = etree.parse(url)
-      except:
-        irc.reply("Failed to open: %s" % (url))
-        return
+        tree = ElementTree.parse(u)
+        document = tree.getroot()
 
-      root = xml.getroot()
-      finance = root[0]
+        if document.find('finance') is None or document.tag != 'xml_api_reply':
+            self.log.error("Something broke parsing {0}".format(url))
+            return None
+        if document.find("./finance/exchange").attrib['data'] == "UNKNOWN EXCHANGE":
+            self.log.error("Error looking up symbol: {0}. Unknown symbol?".format(symbol))
+            return None
 
-      data = dict()
-      for elem in finance:
-        data[elem.tag] = elem.attrib['data']
+        e = {}
+        for elem in document.find('finance'):
+            e[elem.tag] = elem.get('data', None)
 
-      if data['symbol']:
-        pretty_symbol = data['symbol']
-        company = data['company']
-        last = data['last']
-        high = data['high']
-        low = data['low']
-        volume = data['volume']
-        change = data['change']
-        perc_change = data['perc_change']
-        trade_timestamp = data['trade_timestamp']
-      else:
-        irc.reply("Failed to find data for: %s" % (symbol))
+        output = "{0} ({1})".format(self._bu(e['symbol']), self._bold(e['company']))
+        if e['last']:
+            output += "  last: {0}".format(self._bold(e['last']))
+        if e['change'] and e['perc_change']:
+            output += u" {0} ({1})".format(self._colorify(e['change']), self._colorify(e['perc_change'], perc=True))
+        if e['low'] and e['high']:
+            output += "  Daily range:({0}-{1})".format(self._bold(e['low']),self._bold(e['high']))
+        if e['volume'] and e['volume'] != "0":
+            output += "  Volume: {0}".format(self._orange(self._millify(float(e['volume']))))
+        if e['trade_timestamp']:
+            output += "  Last trade: {0}".format(self._blue(e['trade_timestamp']))
 
-      return pretty_symbol, company, last, high, low, volume, change, perc_change, trade_timestamp
-    
-    # function to handle google's output so we don't have to repeat.
-    def _format_google_output(self, pretty_symbol, company, last, high, low, volume, change, perc_change, trade_timestamp):
-      output = ircutils.underline(pretty_symbol) + " (" + ircutils.bold(company) + ")" + " last: " + ircutils.bold(last)
-      output += " " + self._colorify(change) + " (" + self._colorify(perc_change) + ")"
-      output += "  Daily range:(" + low + "-" + high + ")"
-      output += "  Volume: " + ircutils.mircColor(self._millify(float(volume)), 'purple')
-      output += "  Last trade: " + ircutils.mircColor(trade_timestamp, 'blue')
-      return output
-    
-    # indices to cover the indexes
-    def indices(self, irc, msgs, args):
-      """
-      Displays the three major indices for the US Stock Market. Dow Jones Industrial Average, NASDAQ, and S&P500
-      """
+        return output
 
-      indices = ['.DJI','.IXIC','.INX']
+    ###########################
+    # GOOGLE PUBLIC FUNCTIONS #
+    ###########################
 
-      for index in indices:
-        pretty_symbol, company, last, high, low, volume, change, perc_change, trade_timestamp = self._googlequote(index)
-        output = self._format_google_output(pretty_symbol, company, last, high, low, volume, change, perc_change, trade_timestamp)
-        irc.reply(output)
-    
-    indices = wrap(indices)
-    
-    # public frontend to googlequote.
-    def googlequote(self, irc, msgs, args, symbols):
-      """<symbols>
-      Display's a quote from Google for a stock. Can specify multiple stocks. Separate by a space
-      """
+    def googlequote(self, irc, msgs, args, optsymbols):
+        """<symbols>
+        Display's a quote from Google for a stock.
+        Can specify multiple stocks. Separate by a space. Ex: GOOG AAPL (max 5)
+        """
 
-      symbols = self._splitinput(symbols, [' ',','])
-
-      for symbol in symbols:
-        pretty_symbol, company, last, high, low, volume, change, perc_change, trade_timestamp = self._googlequote(symbol)
-        output = self._format_google_output(pretty_symbol, company, last, high, low, volume, change, perc_change, trade_timestamp)
-        irc.reply(output)
+        symbols = self._splitinput(optsymbols.upper(), [' ',','])
+        for symbol in symbols[0:5]:
+            output = self._googlequote(symbol)
+            if output:
+                irc.reply(output)
+            else:
+                irc.reply("ERROR fetching Google quote for: {0}. Unknown symbol?".format(symbol))
 
     googlequote = wrap(googlequote, ['text'])
 
-    def _googleShorten(self, url):
-      """<url>
-      Shorten URL using google.
-      """
-      _gooApi = 'https://www.googleapis.com/urlshortener/v1/url'
-      _headers = {'Content-Type' : 'application/json'}
-      _data = {'longUrl' : utils.web.urlquote(url)}
+    ##################################
+    # GOOGLE PUBLIC MARKET FUNCTIONS #
+    ##################################
 
-      request = urllib2.Request(_gooApi,json.dumps(_data),_headers)
-      response = urllib2.urlopen(request)
-      response_data = response.read()
-      shorturi = json.loads(response_data)['id']
-
-      return shorturi
-
-    def currency(self, irc, msg, args, currencies):
-      """<CURCUR>
-      Example: EURUSD (Euro to US Dollar)
-      Yields currency exchange rates from one currency to another. 
-      """
-
-      currencies = self._splitinput(currencies, [' ',','])
-
-      for currency in currencies:
-        currency_query = "SELECT * from yahoo.finance.xchange WHERE pair in ('%s')" % currency  
-        result = self._yql_query(currency_query)
-
-        name = result['rate']['Name'] 
-
-        currencycheck = currency + "=X"
-
-        if name != currencycheck:
-          rate = result['rate']['Rate']
-          date = result['rate']['Date']
-          time = result['rate']['Time']
-          ask = result['rate']['Ask']
-          bid = result['rate']['Bid']
-
-          output = ircutils.bold(ircutils.underline(name)) + ": " 
-          output += ircutils.mircColor(rate, 'red') + " "
-          output += ircutils.bold(ircutils.underline("Ask")) + ": " + ask + " "
-          output += ircutils.bold(ircutils.underline("Bid")) + ": " + bid + " "
-          output += ircutils.bold(ircutils.underline("Time")) + ": " + ircutils.mircColor(date + " " + time, 'blue')
-
-          irc.reply(output)
-        else:
-          irc.reply("Invalid currency conversion query: " + ircutils.bold(ircutils.underline(currency)))
-
-    currency = wrap(currency, ['text'])
-
-
-    def quote(self, irc, msg, args, opts, symbols):
-        """<company symbol(s)>
-        Gets the information about the current price and change from the
-        previous day of a given company (represented by a stock symbol).
-        Separate multiple SYMBOLs by spaces.
-
-        Options: --fundamentals for fundamentals. --movingaverage for moving averages. --quant for quant options
-        and --extra and --info for more options.
+    def intlindices(self, irc, msg, args):
+        """
+        Displays international market indicies.
         """
 
-        opts = dict(opts)
-        Fundamentals,MovingAverage,Extra,Info,Quant = False, False, False, False, False
+        indices = ['.HSI','SX5E','PX1','OSPTX','SENSEX','XJO','UKX','NI225','000001']
+        for index in indices:
+            output = self._googlequote(index)
+            if output:
+                irc.reply(output)
+            else:
+                irc.reply("ERROR fetching Google quote for: {0}".format(symbol))
 
-        if 'movingaverage' in opts:
-          MovingAverage = True
-        if 'extra' in opts:
-          Extra = True
-        if 'fundamentals' in opts:
-          Fundamentals = True
-        if 'info' in opts:
-          Info = True
-        if 'quant' in opts:
-          Quant = True
+    intlindices = wrap(intlindices)
 
-        symbollist = self._splitinput(symbols, [' ', ','])
+    def indices(self, irc, msgs, args):
+        """
+        Displays the three major indices for the US Stock Market. Dow Jones Industrial Average, NASDAQ, and S&P500
+        """
 
-        for symbol in symbollist:
-          stock_query = "SELECT * FROM yahoo.finance.quotes where symbol ='%s'" % symbol
-          result = self._yql_query(stock_query)
-          data = result['quote']
+        indices = ['.DJI','.IXIC','.INX'] #'.HSI'] #,'NI225']
+        for index in indices:
+            output = self._googlequote(index)
+            if output:
+                irc.reply(output)
+            else:
+                irc.reply("ERROR fetching Google quote for: {0}".format(symbol))
 
-          #self.log.info(json.dumps(data, indent=4))
-          
-          company = data['Name']
+    indices = wrap(indices)
 
-          if company == symbol:
-            irc.reply("No company found for: %s" % (symbol))
-          else:
-            symbol = str.upper(symbol)
-            last = data['LastTradePriceOnly']
-            high = data['DaysHigh']
-            low = data['DaysLow']
-            volume = data['Volume']
-            market_cap = data['MarketCapitalization']
-            change = data['Change']
-            perc_change = data['ChangeinPercent'].replace('%','')
-            LastTradeTime = data['LastTradeTime']
-            LastTradeDate = data['LastTradeDate']
-            yearhigh = data['YearHigh']
-            yearlow = data['YearLow']
+    ###################
+    # YAHOO FUNCTIONS #
+    ###################
 
+    def _yqlquery(self, query):
+        """Perform and return YQL quote."""
+        YQL_URL = "http://query.yahooapis.com/v1/public/yql?"
+        YQL_PARAMS = {"q":query,
+                    "format":"json",
+                    "env":"store://datatables.org/alltableswithkeys"}
 
-            # start output
-            output = ircutils.underline(symbol) + " (" + ircutils.bold(company) + ")" + " last: " + ircutils.bold(last)
+        try:
+            request = urllib2.Request(YQL_URL+urllib.urlencode(YQL_PARAMS))
+            u = urllib2.urlopen(request)
+            return u.read()
+        except Exception, e:
+            self.log.error("Error fetching YQL {0} error {1}".format(url, e))
+            return None
 
-            # basic change/percent with color
-            output += " " + self._colorify(change) + " (" + self._colorify(perc_change) + ")"
+    def _yahooquote(self, symbol):
+        """Internal Yahoo Quote function that wraps YQL."""
 
-            # should we display daily high-low? 
-            displayDailyHighLow = self.registryValue('displayDailyHighLow', msg.args[0])
-            if displayDailyHighLow:
-              if low != None and high != None:
-                output += " Daily range: (" + low + "-" + high + ")"
+        # execute YQL and return.
+        result = self._yqlquery("SELECT * FROM yahoo.finance.quotes where symbol ='%s'" % symbol)
+        self.log.info(str(result))
+        if not result:
+            return None
 
-            # should we display yearly high-low?
-            displayYearlyHighLow = self.registryValue('displayYearlyHighLow', msg.args[0])
-            if displayYearlyHighLow:
-              output += " Yearly range: (" + yearlow + "-" + yearhigh + ")"
+        # Now that we have something, first check count.
+        data = json.loads(result)
+        if data['query']['count'] == 0:
+            self.log.error("ERROR: Yahoo Quote count 0 executing on {0}".format(symbol))
+            return None
+        # simplify dict
+        result = data['query']['results']['quote']
+        # make sure symbol is valid
+        if result['ErrorIndicationreturnedforsymbolchangedinvalid']:
+            self.log.error("ERROR looking up Yahoo symbol {0}".format(symbol))
+            return None
 
-            if volume != None and volume != "0":
-              output += "  Volume: " + ircutils.mircColor(self._millify(float(volume)), 'purple') 
+        # throw remainer into dict.
+        e = {}
+        for each in result:
+            e[each] = result.get(each, None)
 
-            if market_cap != None:
-              output += "  Market Cap: " + ircutils.mircColor(market_cap, 'orange')
+        # now that we have a working symbol, we'll need conditionals per.
+        output = "{0} ({1})".format(self._bu(e['symbol']), self._bold(e['Name']))
+        if e['LastTradePriceOnly']:
+            output += "  last: {0}".format(self._bold(e['LastTradePriceOnly']))
+        if e['Change'] and e['ChangeinPercent']:
+            output += u" {0} ({1})".format(self._colorify(e['Change']), self._colorify(e['ChangeinPercent'], perc=True))
+        if e['DaysLow'] and e['DaysHigh'] and e['DaysLow'] != "0.00" and e['DaysHigh'] != "0.00":
+            output += "  Daily range:({0}-{1})".format(self._bold(e['DaysLow']), self._bold(e['DaysHigh']))
+        if e['YearLow'] and e['YearHigh'] and e['YearLow'] != "0.00" and e['YearHigh'] != "0.00":
+            output += "  Yearly range:({0}-{1})".format(self._bold(e['YearLow']),self._bold(e['YearHigh']))
+        if e['Volume'] and e['Volume'] != "0":
+            output += "  Volume: {0}".format(self._orange(self._millify(float(e['Volume']))))
+        if e['MarketCapitalization']:
+            output += "  MarketCap: {0}".format(self._blue(e['MarketCapitalization']))
+        if e['PERatio']:
+            output += "  P/E: {0}".format(e['PERatio'])
+        #if e['StockExchange']:
+        #    output += "  ex: {0}".format(self._teal(e['StockExchange']))
+        #if e['LastTradeDate'] and e['LastTradeTime']:
+        #    timestamp = e['LastTradeDate'] + " " + e['LastTradeTime']
+        #    output += "  Last trade: {0}".format(self._blue(timestamp))
 
-            if LastTradeDate != None and LastTradeTime != None:
-              output += "  Last trade: " + ircutils.mircColor(LastTradeDate + " " + LastTradeTime, 'blue')
+        return output
 
-            # finally output everything.
+    ################
+    # YAHOO PUBLIC #
+    ################
+
+    def yahooquote(self, irc, msg, args, optsymbols):
+        """<symbols>
+        Display's a quote from Yahoo for a stock.
+        Can specify multiple stocks. Separate by a space. Ex: GOOG AAPL (max 5)
+        """
+
+        symbols = self._splitinput(optsymbols.upper(), [' ',','])
+        for symbol in symbols[0:5]:
+            output = self._yahooquote(symbol)
+            if output:
+                irc.reply(output)
+            else:
+                irc.reply("ERROR fetching Yahoo quote for: {0}".format(symbol))
+
+    yahooquote = wrap(yahooquote, ['text'])
+
+    #########################
+    # PUBLIC STOCK FUNCTION #
+    #########################
+
+    def quote(self, irc, msg, args, optlist, optsymbols):
+        """<ticker symbol(s)>
+        Gets the information about the current price and change from the
+        previous day of a given company (represented by a stock symbol).
+        Separate multiple SYMBOLs by spaces (Max 5)
+        """
+
+        # setup args to manip output/fetching
+        args = {'fundamentals':False, 'movingaverage':False, 'extra':False, 'info':False, 'quant':False}
+        for (key, value) in optlist:
+            if key:
+                args[value] = True
+
+        # make a list of symbols.
+        symbols = self._splitinput(optsymbols.upper(), [' ', ','])
+
+        # process each symbol
+        for symbol in symbols[0:5]:
+            output = self._googlequote(symbol)
+            if not output:
+                output = self._yahooquote(symbol)
+                if not output:
+                    irc.reply("ERROR: I could not find a quote for: {0}. Invalid symbol or service broken?".format(symbol))
+                    return
             irc.reply(output)
-
-            # conditionals section
-
-            if Fundamentals:
-              symbol = str.upper(symbol)
-              last = data['LastTradePriceOnly']
-              pricesales = data['PriceSales']
-              pricebook = data['PriceBook']
-              peratio = data['PERatio']
-              pegratio = data['PEGRatio']
-              bookvalue = data['BookValue']
-              eps = data['EarningsShare']
-
-              # output time
-              output = ircutils.underline(symbol) + " (" + ircutils.bold(company) + ")" + " :: "
-              output += ircutils.bold(ircutils.underline("P/E:")) + " " + peratio + " "
-              output += ircutils.bold(ircutils.underline("P/S:")) + " " + pricesales + " "
-              output += ircutils.bold(ircutils.underline("P/B:")) + " " + pricebook + " "
-              output += ircutils.bold(ircutils.underline("PE/G:")) + " " + pegratio + " "
-              output += ircutils.bold(ircutils.underline("Bookvalue:")) + " " + bookvalue + " "
-              output += ircutils.bold(ircutils.underline("EPS:")) + " " + eps + " "
-
-              irc.reply(output)
-
-            if MovingAverage:
-              fiftyday = data['FiftydayMovingAverage']
-              fiftyday_change = data['ChangeFromFiftydayMovingAverage']
-              fiftyday_perc_change = data['PercentChangeFromFiftydayMovingAverage']
-              twohundredday = data['TwoHundreddayMovingAverage']
-              twohundredday_change = data['ChangeFromTwoHundreddayMovingAverage']
-              twohundredday_perc_change = data['PercentChangeFromTwoHundreddayMovingAverage']
-
-              output = ircutils.underline(symbol) + " (" + ircutils.bold(company) + ")" + " :: Moving Averages :: "
-              output += ircutils.bold(ircutils.underline("50day:")) + " " + fiftyday + " " + self._colorify(fiftyday_change) + " (" + self._colorify(fiftyday_perc_change) + ") "
-              output += ircutils.bold(ircutils.underline("200day:")) + " " + twohundredday + " " + self._colorify(twohundredday_change) + " (" + self._colorify(twohundredday_perc_change) + ")"
-
-              irc.reply(output)
-            if Extra:
-              EBITDA = data['EBITDA']
-              DividendYield = data['DividendYield']
-              DividendShare = data['DividendShare']
-              OneyrTargetPrice = data['OneyrTargetPrice']
-              ShortRatio = data['ShortRatio']
-              PriceEPSEstimateCurrentYear = data['PriceEPSEstimateCurrentYear']
-
-
-              output = ircutils.underline(symbol) + " (" + ircutils.bold(company) + ") "
-
-              # conditionals since some are empty.
-              if EBITDA != None:
-                output += ircutils.bold(ircutils.underline("EBITDA:")) + " " + EBITDA + " "
-              if DividendShare != None and DividendShare != "0.00":
-                output += ircutils.bold(ircutils.underline("Dividend Share:")) + " " + DividendShare + " "
-              if DividendYield != None and DividendYield != "0.00":
-                output += ircutils.bold(ircutils.underline("Dividend Yield:")) + " " + DividendYield + " "
-              if OneyrTargetPrice != None:
-                output += ircutils.bold(ircutils.underline("One Year Target Price:")) + " " + OneyrTargetPrice + " "
-              if ShortRatio != None:
-                output += ircutils.bold(ircutils.underline("Short Ratio:")) + " " + ShortRatio + " "
-              if PriceEPSEstimateCurrentYear != None:
-                output += ircutils.bold(ircutils.underline("Price EPS (Current Year):")) + " " + PriceEPSEstimateCurrentYear + " "
-
-              irc.reply(output)
-
-            if Info:
-              company_query = "SELECT * from yahoo.finance.stocks WHERE symbol='%s'" % symbol
-              companydata = self._yql_query(company_query)
-              companydata = companydata['stock']
-
-              try:
-                start = companydata['start']
-              except:
-                start = None
-              try:
-                end = companydata['end']
-              except:
-                end = None
-              try:
-                sector = companydata['Sector']
-              except:
-                sector = None
-              try:
-                Industry = companydata['Industry']
-              except:
-                Industry = None
-              try:
-                FTE = companydata['FullTimeEmployees']
-              except:
-                FTE = None
-
-              if start != None:
-                output = ircutils.underline(symbol) + " (" + ircutils.bold(company) + ") "
-                output += ircutils.bold(ircutils.underline("IPO:")) + " " + start + " "
-              if end != None:
-                output += ircutils.bold(ircutils.underline("End:")) + " " + end + " "
-              if sector != None:
-                output += ircutils.bold(ircutils.underline("Sector:")) + " " + sector + " "
-              if Industry != None:
-                output += ircutils.bold(ircutils.underline("Industry:")) + " " + Industry + " "
-              if FTE != None:
-                output += ircutils.bold(ircutils.underline("FullTime Employees:")) + " " + FTE + " "
-
-              irc.reply(output)
-
-            if Quant:
-              quant_query = "SELECT * from yahoo.finance.quant WHERE symbol='%s'" % symbol
-              quantdata = self._yql_query(quant_query)
-              quantdata = quantdata['stock']
-              ReturnOnEquity = quantdata['ReturnOnEquity']
-              Stockholders = quantdata['Stockholders'].replace(',','')
-              TotalAssets = quantdata['TotalAssets'].replace(',','')
-              TrailingPE = quantdata['TrailingPE']
-              EarningsGrowth = quantdata['EarningsGrowth']
-              EbitMarge = quantdata['EbitMarge']
-
-              output = ircutils.underline(symbol) + " (" + ircutils.bold(company) + ") "
-
-              if ReturnOnEquity != None:
-                output += ircutils.bold(ircutils.underline("Return On Equity:")) + " " + ReturnOnEquity + " "
-              if Stockholders != None:
-                output += ircutils.bold(ircutils.underline("Stockholders:")) + " " + self._millify(float(Stockholders)) + " "
-              if TotalAssets != None:
-                output += ircutils.bold(ircutils.underline("Total Assets:")) + " " + self._millify(float(TotalAssets)) + " "
-              if TrailingPE != None:
-                output += ircutils.bold(ircutils.underline("Trailing PE:")) + " " + TrailingPE + " "
-              if EarningsGrowth != None:
-                output += ircutils.bold(ircutils.underline("Earnings Growth:")) + " " + self._colorify(EarningsGrowth) + " "
-              if EbitMarge != None:
-                output += ircutils.bold(ircutils.underline("EBIT Margin:")) + " " + EbitMarge + " "
-
-              irc.reply(output)
-            # done quant
 
     quote = wrap(quote, [getopts({'extra': '', 'fundamentals': '', 'movingaverage': '', 'info': '', 'quant': ''}), ('text')])
 
-    # metals fetcher.
-    def metals(self, irc, msg, args):
-      """
-      Display the latest metal prices.
-      """
+    #################################
+    # MISC FRONTENDS FOR OIL/METALS #
+    #################################
 
-      url = "http://drayah.no.de/metals/latest"
-      metals_called = urllib.urlopen(url)
-      json_response = metals_called.read()
-      response_obj = json.loads(json_response)
+    def oil(self, irc, msg, args):
+        """
+        Display the price of oil.
+        """
 
-      gold = response_obj['gold'].get('quote', None)
-      silver = response_obj['silver'].get('quote', None)
-      platinum = response_obj['platinum'].get('quote', None)
-      palladium = response_obj['palladium'].get('quote', None)
+        irc.reply("I don't have a source.")
 
-      output = "Current metals prices (USD/oz): "
+    oil = wrap(oil)
 
-      if gold != None:
-        output += ircutils.bold(ircutils.underline("Gold:"))
-        output += " " + str(gold) + "  "
+    ###########################################################
+    # MISC FINANCIAL FUNCTIONS FOR SYMBOL SEARCH/COMPANY NEWS #
+    ###########################################################
 
-      if silver != None:
-        output += ircutils.bold(ircutils.underline("Silver:"))
-        output += " " + str(silver) + "  " 
-      
-      if platinum != None:
-        output += ircutils.bold(ircutils.underline("Platinum:"))
-        output += " " + str(platinum) + "  "
-      
-      if palladium != None:
-        output += ircutils.bold(ircutils.underline("Palladium:"))
-        output += " " + str(palladium) + "  "
-      
-      irc.reply(output)
+    def _companylookup(self, optinput):
+        """
+        Internal function to lookup company ticker symbols.
+        """
 
-    metals = wrap(metals)
+        url = "http://d.yimg.com/autoc.finance.yahoo.com/autoc?query=%s&callback=YAHOO.Finance.SymbolSuggest.ssCallback" % utils.web.urlquote(optinput)
+        try:
+            request = urllib2.Request(url)
+            u = urllib2.urlopen(request)
+            response = str(u.read()).replace("YAHOO.Finance.SymbolSuggest.ssCallback(", "").replace(")","")
+            data = json.loads(response)
+            results = data.get("ResultSet").get("Result")
+            if len(results) > 0:
+                return results
+            else:
+                return None
+        except Exception, e:
+            self.log.error("Error opening {0} error {1}".format(url, e))
+            return None
 
-    # company news
-    def company(self, irc, msg, args, companyname):
-      """<company name>
-      Look up company name for the given stock symbol.
-      """
+    def symbolsearch(self, irc, msg, args, optinput):
+        """<company name>
+        Look up company name for the given stock symbol.
+        """
 
-      # {"symbol":"GOOG","name": "Google Inc.","exch": "NMS","type": "S","exchDisp":"NASDAQ","typeDisp":"Equity"},
-      url = "http://d.yimg.com/autoc.finance.yahoo.com/autoc?query=%s&callback=YAHOO.Finance.SymbolSuggest.ssCallback" % (companyname)
-      yahoo_called = urllib.urlopen(url)
-      json_response = str(yahoo_called.read()).replace("YAHOO.Finance.SymbolSuggest.ssCallback(", "").replace(")","")
-      response_obj = json.loads(json_response)
-      results = response_obj.get("ResultSet").get("Result")
+        results = self._companylookup(optinput)
 
-      #output = "{0:12} {1:16} {2:16} {3:16}".format("Symbol", "Name", "Type", "Exchange")
+        if not results or len(results) < 1:
+            irc.reply("ERROR: I did not find any symbols for: {0}".format(optinput))
+            return
 
-      for response in results:
-        #if response.get("exch") == "NMS" or response.get("exch") == "NYQ" or response.get("exch") == "ASE":
-        #{"symbol":"GLD","name": "SPDR Gold Shares","exch": "PCX","type": "E","typeDisp":"ETF"} 
-          name = response.get("name").encode('utf-8')
-          symbol = response.get("symbol").encode('utf-8')
-          typeDisp = response.get("typeDisp").encode('utf-8')
-          exchDisp = response.get("exch").encode('utf-8')
+        for r in results:
+            symbol = r.get('symbol', None)
+            typeDisp = r.get('typeDisp', None)
+            exch = r.get('exch', None)
+            name = r.get('name', None)
+            if symbol and typeDisp and exch and name:
+                irc.reply("{0:15} {1:12} {2:5} {3:35}".format(symbol, typeDisp, exch, name))
 
-          output = "{0:9} {1:24} {2:16} {3:16}".format(symbol, name, typeDisp, exchDisp)
-          irc.reply(output)
-
-    company = wrap(company, ['text'])
-
-    def companynews(self, irc, msg, args, symbol):
-      """<symbol>
-      Look up the latest news for a given stock symbol.
-      Example: companynews GOOG
-      """
-
-      rss_url = 'http://finance.yahoo.com/rss/headline?s=%s' % symbol
-
-      try:
-        d = feedparser.parse(rss_url)
-      except:
-        self.log.warning('Failed to parse: %s' % (rss_url))
-        irc.reply('Failed to parse: %s' % (rss_url))
-
-      #if len(d.entries)  >= 1:
-      #  self.log.warning('Failed to find any entries in: %s' % (rss_url))
-      #  irc.reply('Failed to find any entries in: %s' % (rss_url))
-      #  return
-
-      entries = d['entries'][0:4] # max five.
-
-      for entry in entries:
-        title = entry['title']
-        description = entry['description']
-
-        # relative time and colorize
-        pubDate = self._time_created_at(entry.published)
-        pubDate = ircutils.mircColor(pubDate, 'light gray')
-
-        # remove redirect, shorten and color.
-        link = re.sub(r'^.*?/\*','',entry['link']).strip() # remove redirect.
-        #link = self._googleShorten(link)
-        link = ircutils.mircColor(link, 'blue')
-
-        output = title
-        output += " " + link
-        output += " " + pubDate
-
-        irc.reply(output)
-
-    companynews = wrap(companynews, ['somethingWithoutSpaces'])
+    symbolsearch = wrap(symbolsearch, ['text'])
 
 Class = Stock
 
-# vim:set shiftwidth=2 softtabstop=2 expandtab textwidth=350:
+# vim:set shiftwidth=4 softtabstop=4 expandtab textwidth=350:
