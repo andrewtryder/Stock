@@ -5,18 +5,13 @@
 ###
 
 # my libs
-import string
-import urllib
-import urllib2
-import json
-import re
-import math # for millify
-# for google stockquote
-try:
+import json  # yahoo.
+import re  # unicode replace.
+import math # for millify.
+try:  # for google stockquote.
     import xml.etree.cElementTree as ElementTree
 except ImportError:
     import xml.etree.ElementTree as ElementTree
-
 # supybot libs.
 import supybot.utils as utils
 from supybot.commands import *
@@ -39,8 +34,13 @@ class Stock(callbacks.Plugin):
     def die(self):
         self.__parent.die()
 
+    ######################
+    # INTERNAL FUNCTIONS #
+    ######################
+
     def _colorify(self, s, perc=False):
         """Change symbol/color depending on if gain is positive or negative."""
+
         s = s.replace('%','')
         if float(s) > 0:
             if perc:
@@ -56,16 +56,32 @@ class Stock(callbacks.Plugin):
 
     def _millify(self, n):
         """Display human readable numbers."""
+
         millnames=['','k','M','B','T']
         millidx=max(0,min(len(millnames)-1, int(math.floor(math.log10(abs(n))/3.0))))
         return '%.1f%s'%(n/10**(3*millidx),millnames[millidx])
 
     def _splitinput(self, txt, seps):
         """Split input depending on separators."""
+
         default_sep = seps[0]
         for sep in seps[1:]:
             txt = txt.replace(sep, default_sep)
         return [i.strip() for i in txt.split(default_sep)]
+
+    def _httpget(self, url, h=None, d=None):
+        """General HTTP resource fetcher. Supports b64encoded urls."""
+
+        # self.log.info(url)
+        try:
+            if h and d:
+                page = utils.web.getUrl(url, headers=h, data=d)
+            else:
+                page = utils.web.getUrl(url)
+            return page
+        except utils.web.Error as e:
+            self.log.error("I could not open {0} error: {1}".format(url, e))
+            return None
 
     ########################
     # COLOR AND FORMATTING #
@@ -107,47 +123,94 @@ class Stock(callbacks.Plugin):
         """Returns a bold/underline string."""
         return ircutils.bold(ircutils.underline(string))
 
+    #####################################
+    # REDUNDANT GOOGLE INTERNAL FETCHER #
+    # (later if initial breaks?) Code   #
+    # from QSB - http://bit.ly/110PRAf  #
+    #####################################
+
+    def XEncodeReplace(match_object):
+        """Convert \\xnn encoded characters.
+
+        Converts \\xnn encoded characters into their Unicode equivalent.
+
+        Args:
+        match: A string matched by an re pattern of '\\xnn'.
+
+        Returns:
+        A single character string containing the Unicode equivalent character
+        (always within the ASCII range) if match is of the '\\xnn' pattern,
+        otherwise the match string unchanged.
+        """
+
+        char_num_string = match_object.group(1)
+        char_num = int(char_num_string, 16)
+        replacement = chr(char_num)
+        return replacement
+
+    def _googlequote2(self, symbol):
+        """This uses a JSONP-like url from Google to return a stock Quote."""
+
+        # build url.
+        url = 'https://www.google.com/finance/info?infotype=infoquoteall&q='
+        url += utils.web.urlquote(symbol)
+        # process "JSON".
+        html = self._httpget(url)
+        if not html:
+            return None
+        # \xnn problems.
+        # pattern = re.compile('\\\\x(\d{2})')
+        # dict container for output.
+        quote_dict = {}
+        # iterate over each line. have to split on \n because html = str object.
+        for line in html.split('\n'):  # splitlines() ?
+            line = line.rstrip('\n')
+            line_parts = line.split(':')
+            if len(line_parts) == 2:
+                key, value = line_parts
+                key = key.strip('" ,')
+                # Perform the \xnn replacements here.
+                # value = pattern.sub(XEncodeReplace, value)
+                value = value.strip('" ')
+                if key and value:
+                    quote_dict[key] = value
+        # return quote.
+        return quote_dict
+
     ####################
     # GOOGLE FUNCTIONS #
     ####################
 
     def _googlequote(self, symbol):
-        """Return quote from Google."""
+        """Return quote for symbol from Google. Returns None if something breaks."""
 
-        url = "http://www.google.com/ig/api?stock=%s" % urllib.quote(symbol)
-        try:
-            request = urllib2.Request(url, headers={"Accept" : "application/xml"})
-            u = urllib2.urlopen(request)
-        except Exception, e:
-            self.log.error("Error fetching Google stock quote opening {0} error {1}".format(url, e))
+        # build and fetch url.
+        url = "http://www.google.com/ig/api?stock=%s" % utils.web.urlquote(symbol)
+        html = self._httpget(url)
+        if not html:
             return None
-
-        tree = ElementTree.parse(u)
-        document = tree.getroot()
-
-        if document.find('finance') is None or document.tag != 'xml_api_reply':
-            self.log.error("Something broke parsing {0}".format(url))
-            return None
-        if document.find("./finance/exchange").attrib['data'] == "UNKNOWN EXCHANGE":
+        # process XML.
+        document = ElementTree.fromstring(html)
+        if document.findall(".//no_data_message"):
             self.log.error("Error looking up symbol: {0}. Unknown symbol?".format(symbol))
             return None
-
+        # dict for output. create k/v based on stuff in finance.
         e = {}
         for elem in document.find('finance'):
             e[elem.tag] = elem.get('data', None)
-
+        # with dict above, we construct a string conditionally.
         output = "{0} ({1})".format(self._bu(e['symbol']), self._bold(e['company']))
-        if e['last']:
+        if e['last']:  # bold last.
             output += "  last: {0}".format(self._bold(e['last']))
-        if e['change'] and e['perc_change']:
+        if e['change'] and e['perc_change']:  # color percent changes.
             output += u" {0} ({1})".format(self._colorify(e['change']), self._colorify(e['perc_change'], perc=True))
-        if e['low'] and e['high']:
+        if e['low'] and e['high']:  # bold low and high daily ranges.
             output += "  Daily range:({0}-{1})".format(self._bold(e['low']),self._bold(e['high']))
-        if e['volume'] and e['volume'] != "0":
+        if e['volume'] and e['volume'] != "0":  # if we have volume, millify+orange.
             output += "  Volume: {0}".format(self._orange(self._millify(float(e['volume']))))
-        if e['trade_timestamp']:
+        if e['trade_timestamp']:  # last trade.
             output += "  Last trade: {0}".format(self._blue(e['trade_timestamp']))
-
+        # now return the string.
         return output
 
     ###########################
@@ -157,35 +220,33 @@ class Stock(callbacks.Plugin):
     def googlequote(self, irc, msgs, args, optsymbols):
         """<symbols>
         Display's a quote from Google for a stock.
-        Can specify multiple stocks. Separate by a space. Ex: GOOG AAPL (max 5)
+        Can specify multiple stocks. Separate by a space.
+        Ex: GOOG AAPL (max 5)
         """
 
-        symbols = self._splitinput(optsymbols.upper(), [' ',','])
-        for symbol in symbols[0:5]:
+        # make symbols upper, split on space or ,.
+        symbols = self._splitinput(optsymbols.upper(), [' ', ','])
+        for symbol in symbols[0:5]:  # max 5.
             output = self._googlequote(symbol)
-            if output:
+            if output:  # if we get a quote back.
                 irc.reply(output)
-            else:
+            else:  # something went wrong looking up quote.
                 irc.reply("ERROR fetching Google quote for: {0}. Unknown symbol?".format(symbol))
 
     googlequote = wrap(googlequote, ['text'])
 
-    ##################################
-    # GOOGLE PUBLIC MARKET FUNCTIONS #
-    ##################################
-
     def intlindices(self, irc, msg, args):
         """
-        Displays international market indicies.
+        Displays international market indicies from various countries outside the US.
         """
 
-        indices = ['.HSI','SX5E','PX1','OSPTX','SENSEX','XJO','UKX','NI225','000001']
-        for index in indices:
+        indices = ['HSI', 'SX5E', 'PX1', 'OSPTX', 'SENSEX', 'XJO', 'UKX', 'NI225', '000001']
+        for index in indices:  # iterate through quotes above.
             output = self._googlequote(index)
-            if output:
+            if output:  # if we get a quote back.
                 irc.reply(output)
-            else:
-                irc.reply("ERROR fetching Google quote for: {0}".format(symbol))
+            else:  # if something breaks.
+                irc.reply("ERROR fetching Google quote for: {0}".format(index))
 
     intlindices = wrap(intlindices)
 
@@ -194,13 +255,13 @@ class Stock(callbacks.Plugin):
         Displays the three major indices for the US Stock Market. Dow Jones Industrial Average, NASDAQ, and S&P500
         """
 
-        indices = ['.DJI','.IXIC','.INX'] #'.HSI'] #,'NI225']
-        for index in indices:
+        indices = ['.DJI', '.IXIC', '.INX']
+        for index in indices:  # iterate through quotes above.
             output = self._googlequote(index)
-            if output:
+            if output:  # if we get a quote back.
                 irc.reply(output)
-            else:
-                irc.reply("ERROR fetching Google quote for: {0}".format(symbol))
+            else:  # if something breaks.
+                irc.reply("ERROR fetching Google quote for: {0}".format(index))
 
     indices = wrap(indices)
 
@@ -209,46 +270,42 @@ class Stock(callbacks.Plugin):
     ###################
 
     def _yqlquery(self, query):
-        """Perform and return YQL quote."""
+        """Perform a YQL query for stock quote and return."""
+
+        # base params.
         YQL_URL = "http://query.yahooapis.com/v1/public/yql?"
         YQL_PARAMS = {"q":query,
                     "format":"json",
                     "env":"store://datatables.org/alltableswithkeys"}
-
-        try:
-            request = urllib2.Request(YQL_URL+urllib.urlencode(YQL_PARAMS))
-            u = urllib2.urlopen(request)
-            return u.read()
-        except Exception, e:
-            self.log.error("Error fetching YQL {0} error {1}".format(url, e))
+        # build and fetch url.
+        url = YQL_URL + utils.web.urlencode(YQL_PARAMS)
+        html = self._httpget(url)
+        if not html:  # something broke.
             return None
+        else:  # return YQL query.
+            return html
 
     def _yahooquote(self, symbol):
         """Internal Yahoo Quote function that wraps YQL."""
 
         # execute YQL and return.
         result = self._yqlquery("SELECT * FROM yahoo.finance.quotes where symbol ='%s'" % symbol)
-        self.log.info(str(result))
-        if not result:
+        if not result:  # returns None from yqlquery.
             return None
-
-        # Now that we have something, first check count.
+        # Try and load json. Do some checking. first check count.
         data = json.loads(result)
         if data['query']['count'] == 0:
             self.log.error("ERROR: Yahoo Quote count 0 executing on {0}".format(symbol))
             return None
-        # simplify dict
-        result = data['query']['results']['quote']
+        result = data['query']['results']['quote']  # simplify dict
         # make sure symbol is valid
         if result['ErrorIndicationreturnedforsymbolchangedinvalid']:
             self.log.error("ERROR looking up Yahoo symbol {0}".format(symbol))
             return None
-
-        # throw remainer into dict.
+        # now that all is good, process results into dict for output.
         e = {}
         for each in result:
             e[each] = result.get(each, None)
-
         # now that we have a working symbol, we'll need conditionals per.
         output = "{0} ({1})".format(self._bu(e['symbol']), self._bold(e['Name']))
         if e['LastTradePriceOnly']:
@@ -264,31 +321,31 @@ class Stock(callbacks.Plugin):
         if e['MarketCapitalization']:
             output += "  MarketCap: {0}".format(self._blue(e['MarketCapitalization']))
         if e['PERatio']:
-            output += "  P/E: {0}".format(e['PERatio'])
-        #if e['StockExchange']:
-        #    output += "  ex: {0}".format(self._teal(e['StockExchange']))
-        #if e['LastTradeDate'] and e['LastTradeTime']:
-        #    timestamp = e['LastTradeDate'] + " " + e['LastTradeTime']
-        #    output += "  Last trade: {0}".format(self._blue(timestamp))
-
+            output += "  P/E: {0}".format(self._teal(e['PERatio']))
+        if e['LastTradeDate'] and e['LastTradeTime']:
+            timestamp = e['LastTradeDate'] + " " + e['LastTradeTime']
+            output += "  Last trade: {0}".format(self._blue(timestamp))
+        # now return the string.
         return output
 
-    ################
-    # YAHOO PUBLIC #
-    ################
+    ##########################
+    # YAHOO PUBLIC FUNCTIONS #
+    ##########################
 
     def yahooquote(self, irc, msg, args, optsymbols):
         """<symbols>
         Display's a quote from Yahoo for a stock.
-        Can specify multiple stocks. Separate by a space. Ex: GOOG AAPL (max 5)
+        Can specify multiple stocks. Separate by a space.
+        Ex: GOOG AAPL (max 5)
         """
 
-        symbols = self._splitinput(optsymbols.upper(), [' ',','])
-        for symbol in symbols[0:5]:
+        # make symbols upper, split on space or ,.
+        symbols = self._splitinput(optsymbols.upper(), [' ', ','])
+        for symbol in symbols[0:5]:  # limit on 5.
             output = self._yahooquote(symbol)
-            if output:
+            if output:  # if we have output.
                 irc.reply(output)
-            else:
+            else:  # if we don't have output.
                 irc.reply("ERROR fetching Yahoo quote for: {0}".format(symbol))
 
     yahooquote = wrap(yahooquote, ['text'])
@@ -299,31 +356,26 @@ class Stock(callbacks.Plugin):
 
     def quote(self, irc, msg, args, optlist, optsymbols):
         """<ticker symbol(s)>
-        Gets the information about the current price and change from the
-        previous day of a given company (represented by a stock symbol).
-        Separate multiple SYMBOLs by spaces (Max 5)
+
+        Returns stock information about <ticker>.
+        Separate multiple SYMBOLs by spaces (Max 5).
+        Ex: GOOG AAPL (max 5)
         """
 
-        # setup args to manip output/fetching
-        args = {'fundamentals':False, 'movingaverage':False, 'extra':False, 'info':False, 'quant':False}
-        for (key, value) in optlist:
-            if key:
-                args[value] = True
-
-        # make a list of symbols.
+        # make a list of symbols after splitting on space or ,.
         symbols = self._splitinput(optsymbols.upper(), [' ', ','])
-
-        # process each symbol
-        for symbol in symbols[0:5]:
-            output = self._googlequote(symbol)
-            if not output:
+        # process each symbol.
+        for symbol in symbols[0:5]:  # enforce max 5.
+            output = self._googlequote(symbol)  # try google fetch first.
+            if not output:  # if we don't, try yahoo.
                 output = self._yahooquote(symbol)
-                if not output:
-                    irc.reply("ERROR: I could not find a quote for: {0}. Invalid symbol or service broken?".format(symbol))
+                if not output:  # if not yahoo, report error.
+                    irc.reply("ERROR: I could not fetch a quote for: {0}. Check that the symbol is correct.".format(symbol))
                     return
+            # we'll be here if one of the quotes works. output.
             irc.reply(output)
 
-    quote = wrap(quote, [getopts({'extra': '', 'fundamentals': '', 'movingaverage': '', 'info': '', 'quant': ''}), ('text')])
+    quote = wrap(quote, [('text')])
 
     #################################
     # MISC FRONTENDS FOR OIL/METALS #
@@ -343,24 +395,27 @@ class Stock(callbacks.Plugin):
     ###########################################################
 
     def _companylookup(self, optinput):
-        """
+        """<company name>
         Internal function to lookup company ticker symbols.
+        Ex: Apple or Goldman.
         """
 
-        url = "http://d.yimg.com/autoc.finance.yahoo.com/autoc?query=%s&callback=YAHOO.Finance.SymbolSuggest.ssCallback" % utils.web.urlquote(optinput)
-        try:
-            request = urllib2.Request(url)
-            u = urllib2.urlopen(request)
-            response = str(u.read()).replace("YAHOO.Finance.SymbolSuggest.ssCallback(", "").replace(")","")
-            data = json.loads(response)
-            results = data.get("ResultSet").get("Result")
-            if len(results) > 0:
-                return results
-            else:
-                return None
-        except Exception, e:
-            self.log.error("Error opening {0} error {1}".format(url, e))
+        # construct url
+        url = "http://d.yimg.com/autoc.finance.yahoo.com/autoc?query=%s" % utils.web.urlquote(optinput)
+        url += "&callback=YAHOO.Finance.SymbolSuggest.ssCallback"
+        # try and fetch json.
+        html = self._httpget(url)
+        if not html:  # something broke.
             return None
+        # we need to mangle the JSONP into JSON here.
+        html = html.replace("YAHOO.Finance.SymbolSuggest.ssCallback(", "").replace(")", "")
+        # make sure the JSON is proper, otherwise return None.
+        data = json.loads(html)
+        results = data["ResultSet"]["Result"]
+        if len (results) == 0:  # if we have no results, err.
+            return None
+        else:  # otherwise, return results.
+            return results
 
     def symbolsearch(self, irc, msg, args, optinput):
         """<company name>
@@ -368,21 +423,20 @@ class Stock(callbacks.Plugin):
         """
 
         results = self._companylookup(optinput)
-
-        if not results or len(results) < 1:
+        if not results:  # if we don't have any results.
             irc.reply("ERROR: I did not find any symbols for: {0}".format(optinput))
             return
-
+        # now iterate over and output each symbol/result.
         for r in results:
-            symbol = r.get('symbol', None)
-            typeDisp = r.get('typeDisp', None)
-            exch = r.get('exch', None)
-            name = r.get('name', None)
-            if symbol and typeDisp and exch and name:
-                irc.reply("{0:15} {1:12} {2:5} {3:35}".format(symbol, typeDisp, exch, name))
+            symbol = r.get('symbol')
+            typeDisp = r.get('typeDisp')
+            exch = r.get('exch')
+            name = r.get('name')
+            if symbol and typeDisp and exch and name:  # have to have all. display in a table.
+                irc.reply("{0:15} {1:12} {2:5} {3:40}".format(symbol, typeDisp, exch, name))
 
     symbolsearch = wrap(symbolsearch, ['text'])
 
 Class = Stock
 
-# vim:set shiftwidth=4 softtabstop=4 expandtab textwidth=350:
+# vim:set shiftwidth=4 softtabstop=4 expandtab textwidth=250:
