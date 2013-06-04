@@ -354,7 +354,7 @@ class Stock(callbacks.Plugin):
     # PUBLIC STOCK FUNCTION #
     #########################
 
-    def quote(self, irc, msg, args, optlist, optsymbols):
+    def quote(self, irc, msg, args, optsymbols):
         """<ticker symbol(s)>
 
         Returns stock information about <ticker>.
