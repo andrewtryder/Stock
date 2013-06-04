@@ -6,20 +6,24 @@ Supybot-Stock
 History
 
     This was my first big plugin. I had made a plugin because all of the Supybot plugins for displaying
-    stock symbol / ticker information were screen scraping hacks. Moreoever, each one I tested was broken.
+    stock symbol / ticker information were screen scraping hacks.
 
-    I have methods for Google's stock API and Yahoo via YQL. At certain times, and depending on the symbol, one
-    or the other works. So, I did two methods and linked them into a main command called "quote".
+    I decided to make my own.
+
+    One big problem: while the data for quotes has become more liberated, there still is not some abundant API.
+    Mainly, this has to do with the fact of the money invovled and how much quotes cost.
+
+    I found Yahoo and Google "APIs", except each returns different information and also has different symbols.
+    Many also want to know some of the simple quotes like oil, gold, etc. I figured out how to make a look-up
+    table for doing these quotes.
 
 Instructions
 
-    No setup. I suggest adding an alias from quote to stock.
+    No setup. Should work fine out of a 2.6+ setup.
+    I suggest adding an alias from quote to stock:
 
-Future
+    /msg <bot> Alias add stock quote
 
-    I have plans to add in oil/metals prices as I have decyphered the futures contract method and have
-    a crude method to implement this. Once you can get a reliable contract source, YQL has the quotes
-    available from the exchanges.
 
 Notes
 
