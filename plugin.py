@@ -3,15 +3,15 @@
 # Copyright (c) 2013, spline
 # All rights reserved.
 ###
-
 # my libs
 import json  # yahoo.
 import re  # unicode replace.
-import math # for millify.
+import math  # for millify.
 try:  # for google stockquote.
     import xml.etree.cElementTree as ElementTree
 except ImportError:
     import xml.etree.ElementTree as ElementTree
+import datetime  # futures math.
 # supybot libs.
 import supybot.utils as utils
 from supybot.commands import *
@@ -129,7 +129,7 @@ class Stock(callbacks.Plugin):
     # from QSB - http://bit.ly/110PRAf  #
     #####################################
 
-    def XEncodeReplace(match_object):
+    def XEncodeReplace(self, match_object):
         """Convert \\xnn encoded characters.
 
         Converts \\xnn encoded characters into their Unicode equivalent.
@@ -159,7 +159,7 @@ class Stock(callbacks.Plugin):
         if not html:
             return None
         # \xnn problems.
-        # pattern = re.compile('\\\\x(\d{2})')
+        pattern = re.compile('\\\\x(\d{2})')
         # dict container for output.
         quote_dict = {}
         # iterate over each line. have to split on \n because html = str object.
@@ -170,7 +170,7 @@ class Stock(callbacks.Plugin):
                 key, value = line_parts
                 key = key.strip('" ,')
                 # Perform the \xnn replacements here.
-                # value = pattern.sub(XEncodeReplace, value)
+                value = pattern.sub(XEncodeReplace, value)
                 value = value.strip('" ')
                 if key and value:
                     quote_dict[key] = value
@@ -351,7 +351,7 @@ class Stock(callbacks.Plugin):
     yahooquote = wrap(yahooquote, ['text'])
 
     #########################
-    # PUBLIC STOCK FUNCTION #
+    # PUBLIC STOCK FRONTEND #
     #########################
 
     def quote(self, irc, msg, args, optsymbols):
@@ -377,18 +377,87 @@ class Stock(callbacks.Plugin):
 
     quote = wrap(quote, [('text')])
 
-    #################################
-    # MISC FRONTENDS FOR OIL/METALS #
-    #################################
+    ##########################################
+    # FUTURES CONTRACTS INTERNAL/PUBLIC FUNC #
+    # USES YAHOOQUOTE AFTER FIGURING OUT SYM #
+    ##########################################
+
+    def _futuresymbol(self, symbol):
+        """This is a horribly inaccurate calculation method to calculate a future
+        contract's symbol."""
+
+        # k,v - symbol [prefix + exchange.]
+        table = {'oil':['CL', 'NYM'],
+                 'gold':['GC', 'CMX'],
+                 'palladium':['PA', 'NYM'],
+                 'platinum':['PL','NYM'],
+                 'silver':['SI','CMX'],
+                 'copper':['HG','CMX']}
+        # letter codes for months
+        months = {'1':'F', '2':'G', '3':'H', '4':'J',
+                  '5':'K', '6':'M', '7':'N', '8':'Q',
+                  '9':'U', '10':'V', '11':'X', '12':'Z'}
+        # now.
+        now = datetime.datetime.now()
+        # different calc, depending on the symbol.
+        if symbol == "oil":
+            if now.day > 20:  # 21st and on.
+                mon = now + datetime.timedelta(days=40)
+            else:  # 20th and before.
+                mon = now + datetime.timedelta(days=30)
+        # palladium, copper, platinum, silver, palladium
+        elif symbol in ['gold', 'silver', 'palladium', 'platinum', 'copper']:
+            if now.day > 25:  # past 26th of the month.
+                mon = now + datetime.timedelta(days=30)
+            else:
+                mon = now
+        # CONSTRUCT SYMBOL: table prefix + month code (letter) + YR + exchange suffix.
+        contract = "{0}{1}{2}.{3}".format(table[symbol][0], months[str(mon.month)], mon.strftime("%y"), table[symbol][1])
+        return contract
 
     def oil(self, irc, msg, args):
         """
-        Display the price of oil.
+        Display the latest quote for Light Sweet Crude Oil (WTI).
         """
 
-        irc.reply("I don't have a source.")
+        symbol = self._futuresymbol('oil')  # get oil symbol.
+        output = self._yahooquote(symbol)
+        if not output:  # if not yahoo, report error.
+            irc.reply("ERROR: I could not fetch a quote for: {0}. Check that the symbol is correct.".format(symbol))
+        else:
+            irc.reply(output)
 
     oil = wrap(oil)
+
+    def gold(self, irc, msg, args):
+        """
+        Display the latest quote for Gold Futures.
+        """
+
+        symbol = self._futuresymbol('gold')  # get gold symbol.
+        output = self._yahooquote(symbol)
+        if not output:  # if not yahoo, report error.
+            irc.reply("ERROR: I could not fetch a quote for: {0}. Check that the symbol is correct.".format(symbol))
+        else:
+            irc.reply(output)
+
+    gold = wrap(gold)
+
+    def metals(self, irc, msg, args):
+        """
+        Display the latest quote for metals (gold, silver, palladium, platinum, copper).
+        """
+
+        # do all metals @ once.
+        for symbol in ['gold', 'silver', 'palladium', 'platinum', 'copper']:
+            symbol = self._futuresymbol(symbol)
+            output = self._yahooquote(symbol)
+            if not output:  # if not yahoo, report error.
+                irc.reply("ERROR: I could not fetch a quote for: {0}. Check that the symbol is correct.".format(symbol))
+            else:
+                irc.reply(output)
+
+    metals = wrap(metals)
 
     ###########################################################
     # MISC FINANCIAL FUNCTIONS FOR SYMBOL SEARCH/COMPANY NEWS #
