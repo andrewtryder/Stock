@@ -373,7 +373,7 @@ class Stock(callbacks.Plugin):
                     irc.reply("ERROR: I could not fetch a quote for: {0}. Check that the symbol is correct.".format(symbol))
                     return
             # we'll be here if one of the quotes works. output.
-            irc.reply(output)
+            irc.reply(output.encode('utf-8'))
 
     quote = wrap(quote, [('text')])
 
