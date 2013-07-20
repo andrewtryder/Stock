@@ -72,7 +72,6 @@ class Stock(callbacks.Plugin):
     def _httpget(self, url, h=None, d=None):
         """General HTTP resource fetcher. Supports b64encoded urls."""
 
-        # self.log.info(url)
         try:
             if h and d:
                 page = utils.web.getUrl(url, headers=h, data=d)
@@ -127,6 +126,8 @@ class Stock(callbacks.Plugin):
     # REDUNDANT GOOGLE INTERNAL FETCHER #
     # (later if initial breaks?) Code   #
     # from QSB - http://bit.ly/110PRAf  #
+    #####################################
+    # KEPT FOR FUTURE USAGE             #
     #####################################
 
     def XEncodeReplace(self, match_object):
@@ -188,16 +189,17 @@ class Stock(callbacks.Plugin):
         url = "http://www.google.com/ig/api?stock=%s" % utils.web.urlquote(symbol)
         html = self._httpget(url)
         if not html:
+            self.log.error("_googlequote: Failed on Google Quote for {0}".format(symbol))
             return None
         # process XML.
-        document = ElementTree.fromstring(html)
+        document = ElementTree.fromstring(html.decode('utf-8'))
         if document.findall(".//no_data_message"):
             self.log.error("Error looking up symbol: {0}. Unknown symbol?".format(symbol))
             return None
         # dict for output. create k/v based on stuff in finance.
         e = {}
         for elem in document.find('finance'):
-            e[elem.tag] = elem.get('data', None)
+            e[elem.tag] = elem.get('data')
         # with dict above, we construct a string conditionally.
         output = "{0} ({1})".format(self._bu(e['symbol']), self._bold(e['company']))
         if e['last']:  # bold last.
@@ -211,7 +213,7 @@ class Stock(callbacks.Plugin):
         if e['trade_timestamp']:  # last trade.
             output += "  Last trade: {0}".format(self._blue(e['trade_timestamp']))
         # now return the string.
-        return output
+        return output.encode('utf-8')
 
     ###########################
     # GOOGLE PUBLIC FUNCTIONS #
@@ -219,6 +221,7 @@ class Stock(callbacks.Plugin):
 
     def googlequote(self, irc, msgs, args, optsymbols):
         """<symbols>
+
         Display's a quote from Google for a stock.
         Can specify multiple stocks. Separate by a space.
         Ex: GOOG AAPL (max 5)
@@ -252,7 +255,8 @@ class Stock(callbacks.Plugin):
 
     def indices(self, irc, msgs, args):
         """
-        Displays the three major indices for the US Stock Market. Dow Jones Industrial Average, NASDAQ, and S&P500
+        Displays the three major indices for the US Stock Market:
+        Dow Jones Industrial Average, NASDAQ, and S&P500
         """
 
         indices = ['.DJI', '.IXIC', '.INX']
@@ -281,9 +285,10 @@ class Stock(callbacks.Plugin):
         url = YQL_URL + utils.web.urlencode(YQL_PARAMS)
         html = self._httpget(url)
         if not html:  # something broke.
+            self.log.error("_yqlquery: Failed on YQLQuery for {0}".format(query))
             return None
         else:  # return YQL query.
-            return html
+            return html.decode('utf-8')
 
     def _yahooquote(self, symbol):
         """Internal Yahoo Quote function that wraps YQL."""
@@ -291,21 +296,23 @@ class Stock(callbacks.Plugin):
         # execute YQL and return.
         result = self._yqlquery("SELECT * FROM yahoo.finance.quotes where symbol ='%s'" % symbol)
         if not result:  # returns None from yqlquery.
+            self.log.error("_yahooquote: Failed on YQLQuery for {0}".format(symbol))
             return None
         # Try and load json. Do some checking. first check count.
         data = json.loads(result)
         if data['query']['count'] == 0:
-            self.log.error("ERROR: Yahoo Quote count 0 executing on {0}".format(symbol))
+            self.log.error("_yahooquote: ERROR: Yahoo Quote count 0 executing on {0}".format(symbol))
+            self.log.error("_yahooquote: data :: {0}".format(data))
             return None
         result = data['query']['results']['quote']  # simplify dict
         # make sure symbol is valid
         if result['ErrorIndicationreturnedforsymbolchangedinvalid']:
-            self.log.error("ERROR looking up Yahoo symbol {0}".format(symbol))
+            self.log.error("_yahooquote: ERROR looking up Yahoo symbol {0}".format(symbol))
             return None
         # now that all is good, process results into dict for output.
         e = {}
         for each in result:
-            e[each] = result.get(each, None)
+            e[each] = result.get(each)
         # now that we have a working symbol, we'll need conditionals per.
         output = "{0} ({1})".format(self._bu(e['symbol']), self._bold(e['Name']))
         if e['LastTradePriceOnly']:
@@ -326,7 +333,7 @@ class Stock(callbacks.Plugin):
             timestamp = e['LastTradeDate'] + " " + e['LastTradeTime']
             output += "  Last trade: {0}".format(self._blue(timestamp))
         # now return the string.
-        return output
+        return output.encode('utf-8')
 
     ##########################
     # YAHOO PUBLIC FUNCTIONS #
@@ -334,6 +341,7 @@ class Stock(callbacks.Plugin):
 
     def yahooquote(self, irc, msg, args, optsymbols):
         """<symbols>
+
         Display's a quote from Yahoo for a stock.
         Can specify multiple stocks. Separate by a space.
         Ex: GOOG AAPL (max 5)
@@ -373,7 +381,7 @@ class Stock(callbacks.Plugin):
                     irc.reply("ERROR: I could not fetch a quote for: {0}. Check that the symbol is correct.".format(symbol))
                     return
             # we'll be here if one of the quotes works. output.
-            irc.reply(output.encode('utf-8'))
+            irc.reply(output)
 
     quote = wrap(quote, [('text')])
 
@@ -383,8 +391,8 @@ class Stock(callbacks.Plugin):
     ##########################################
 
     def _futuresymbol(self, symbol):
-        """This is a horribly inaccurate calculation method to calculate a future
-        contract's symbol."""
+        """This is a horribly inaccurate calculation method to determine the precise
+        ticker symbol for a futures contract."""
 
         # k,v - symbol [prefix + exchange.]
         table = {'oil':['CL', 'NYM'],
@@ -464,10 +472,7 @@ class Stock(callbacks.Plugin):
     ###########################################################
 
     def _companylookup(self, optinput):
-        """<company name>
-        Internal function to lookup company ticker symbols.
-        Ex: Apple or Goldman.
-        """
+        """Internal function to lookup company ticker symbols."""
 
         # construct url
         url = "http://d.yimg.com/autoc.finance.yahoo.com/autoc?query=%s" % utils.web.urlquote(optinput)
@@ -475,7 +480,10 @@ class Stock(callbacks.Plugin):
         # try and fetch json.
         html = self._httpget(url)
         if not html:  # something broke.
+            self.log.error("_companylookup: failed to get URL.")
             return None
+        # decode
+        html = html.decode('utf-8')
         # we need to mangle the JSONP into JSON here.
         html = html.replace("YAHOO.Finance.SymbolSuggest.ssCallback(", "").replace(")", "")
         # make sure the JSON is proper, otherwise return None.
@@ -484,11 +492,13 @@ class Stock(callbacks.Plugin):
         if len (results) == 0:  # if we have no results, err.
             return None
         else:  # otherwise, return results.
-            return results
+            return results.encode('utf-8')
 
     def symbolsearch(self, irc, msg, args, optinput):
         """<company name>
-        Look up company name for the given stock symbol.
+
+        Search for a stock symbol given company name.
+        Ex: Google
         """
 
         results = self._companylookup(optinput)
