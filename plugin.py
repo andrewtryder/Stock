@@ -279,10 +279,11 @@ class Stock(callbacks.Plugin):
         # base params.
         YQL_URL = "http://query.yahooapis.com/v1/public/yql?"
         YQL_PARAMS = {"q":query,
-                    "format":"json",
-                    "env":"store://datatables.org/alltableswithkeys"}
+                      "format":"json",
+                      "env":"store://datatables.org/alltableswithkeys"}
         # build and fetch url.
         url = YQL_URL + utils.web.urlencode(YQL_PARAMS)
+        self.log.info(url)
         html = self._httpget(url)
         if not html:  # something broke.
             self.log.error("_yqlquery: Failed on YQLQuery for {0}".format(query))
