@@ -291,6 +291,35 @@ class Stock(callbacks.Plugin):
         else:  # return YQL query.
             return html.decode('utf-8')
 
+    def _yahoocurrency(self, symbol):
+        """Internal Yahoo Currency function that wraps YQL."""
+
+        # execute YQL and return.
+        result = self._yqlquery("SELECT * from yahoo.finance.xchange where pair = '%s'" % symbol)
+        if not result:  # returns None from yqlquery.
+            self.log.error("_yahoocurrency: Failed on YQLQuery for {0}".format(symbol))
+            return None
+        # Try and load json. Do some checking. first check count.
+        data = json.loads(result)
+        if data['query']['count'] == 0:
+            self.log.error("_yahoocurrency: ERROR: Yahoo Quote count 0 executing on {0}".format(symbol))
+            self.log.error("_yahoocurrency: data :: {0}".format(data))
+            return None
+        result = data['query']['results']['rate']  # simplify dict
+        # make sure symbol is valid
+        if result['Rate'] == "0.00":
+            self.log.error("_yahoocurrency: ERROR looking up currency {0}".format(symbol))
+            return None
+        # now that all is good, process results into dict for output.
+        e = {}
+        for each in result:
+            e[each] = result.get(each)
+        # now that we have a working currency translation:
+        # USDCAD | RATE | BID | ASK | 17.08 ET on 2013.0731
+        dt = "{0} {1}".format(e['Date'], e['Time'])  # # 7/31/2013 5:55pm
+        output = "{0} :: Rate: {1} | Bid: {2} | Ask: {3} | {4}".format(self._red(e['Name']), self._bold(e['Rate']), self._bold(e['Bid']), self._bold(e['Ask']), dt)
+        return output.encode('utf-8')
+
     def _yahooquote(self, symbol):
         """Internal Yahoo Quote function that wraps YQL."""
 
@@ -358,6 +387,26 @@ class Stock(callbacks.Plugin):
                 irc.reply("ERROR fetching Yahoo quote for: {0}".format(symbol))
 
     yahooquote = wrap(yahooquote, ['text'])
+
+    def currency(self, irc, msg, args, optsymbols):
+        """<symbols>
+
+        Display's a quote from Yahoo for a currency.
+        Can specify multiple currencies. Separate by a space.
+        Ex: USDCAD GBPUSD (max 5)
+        """
+
+        # http://openexchangerates.org/api/currencies.json
+        # make symbols upper, split on space or ,.
+        symbols = self._splitinput(optsymbols.upper(), [' ', ','])
+        for symbol in symbols[0:5]:  # limit on 5.
+            output = self._yahoocurrency(symbol)
+            if output:  # if we have output.
+                irc.reply(output)
+            else:  # if we don't have output.
+                irc.reply("ERROR fetching Yahoo currency for: {0}".format(symbol))
+
+    currency = wrap(currency, ['text'])
 
     #########################
     # PUBLIC STOCK FRONTEND #
