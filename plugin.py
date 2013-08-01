@@ -12,6 +12,7 @@ try:  # for google stockquote.
 except ImportError:
     import xml.etree.ElementTree as ElementTree
 import datetime  # futures math.
+import pytz  # tzconv for relativetime.
 # supybot libs.
 import supybot.utils as utils
 from supybot.commands import *
@@ -283,7 +284,6 @@ class Stock(callbacks.Plugin):
                       "env":"store://datatables.org/alltableswithkeys"}
         # build and fetch url.
         url = YQL_URL + utils.web.urlencode(YQL_PARAMS)
-        self.log.info(url)
         html = self._httpget(url)
         if not html:  # something broke.
             self.log.error("_yqlquery: Failed on YQLQuery for {0}".format(query))
@@ -314,11 +314,32 @@ class Stock(callbacks.Plugin):
         e = {}
         for each in result:
             e[each] = result.get(each)
-        # now that we have a working currency translation:
-        # USDCAD | RATE | BID | ASK | 17.08 ET on 2013.0731
-        dt = "{0} {1}".format(e['Date'], e['Time'])  # # 7/31/2013 5:55pm
+        # now that we have a working currency translation, create output string.
+        dt = "{0} {1}".format(e['Date'], e['Time'])  # create dtstring
+        dt = self._timedelta(dt)  # convert to relative time.
         output = "{0} :: Rate: {1} | Bid: {2} | Ask: {3} | {4}".format(self._red(e['Name']), self._bold(e['Rate']), self._bold(e['Bid']), self._bold(e['Ask']), dt)
+        # return.
         return output.encode('utf-8')
+
+    def _timedelta(self, date):
+        """Take a last trade date from Yahoo and return a relative date."""
+
+        dt = datetime.datetime.strptime(date, '%m/%d/%Y %H:%M%p')  # 7/31/2013 5:55pm
+        dt = pytz.timezone("US/Eastern").localize(dt)  # all times in "Eastern"
+        utc_dt = pytz.utc.normalize(dt.astimezone(pytz.utc))  # go to UTC.
+
+        # do the math.
+        d = datetime.datetime.utcnow().replace(tzinfo = pytz.utc) - utc_dt
+        # now parse and return.
+        if d.days:
+            rel_time = "%sd ago" % d.days
+        elif d.seconds > 3600:
+            rel_time = "%sh ago" % (d.seconds / 3600)
+        elif 60 <= d.seconds < 3600:
+            rel_time = "%sm ago" % (d.seconds / 60)
+        else:
+            rel_time = "%ss ago" % (d.seconds)
+        return rel_time
 
     def _yahooquote(self, symbol):
         """Internal Yahoo Quote function that wraps YQL."""
@@ -360,7 +381,8 @@ class Stock(callbacks.Plugin):
         if e['PERatio']:
             output += "  P/E: {0}".format(self._teal(e['PERatio']))
         if e['LastTradeDate'] and e['LastTradeTime']:
-            timestamp = e['LastTradeDate'] + " " + e['LastTradeTime']
+            timestamp = "{0} {1}".format(e['LastTradeDate'], e['LastTradeTime'])
+            timestamp = self._timedelta(timestamp)  # convert to relative time.
             output += "  Last trade: {0}".format(self._blue(timestamp))
         # now return the string.
         return output.encode('utf-8')
