@@ -410,6 +410,21 @@ class Stock(callbacks.Plugin):
 
     yahooquote = wrap(yahooquote, ['text'])
 
+    def bonds(self, irc, msgs, args):
+        """
+        Displays the US Treasury Bonds Rates.
+        """
+
+        indices = ['^FVX', '^TNX', '^TYX']
+        for index in indices:  # iterate through quotes above.
+            output = self._yahooquote(index)
+            if output:  # if we get a quote back.
+                irc.reply(output)
+            else:  # if something breaks.
+                irc.reply("ERROR fetching Google quote for: {0}".format(index))
+
+    bonds = wrap(bonds)
+
     def currency(self, irc, msg, args, optsymbols):
         """<symbols>
 
