@@ -487,8 +487,14 @@ class Stock(callbacks.Plugin):
                  'palladium':['PA', 'NYM'],
                  'platinum':['PL','NYM'],
                  'silver':['SI','CMX'],
-                 'copper':['HG','CMX']}
-        # letter codes for months
+                 'copper':['HG','CMX'],
+                 'corn':['C', 'CBT'],
+                 'oats':['O', 'CBT'],
+                 'rice':['RR', 'CBT'],
+                 'sbmeal':['SM', 'CBT'],
+                 'sboil':['BO', 'CBT'],
+                 'soybeans':['SQ', 'CBT']}
+        # letter codes for months in oil/metals
         months = {'1':'F', '2':'G', '3':'H', '4':'J',
                   '5':'K', '6':'M', '7':'N', '8':'Q',
                   '9':'U', '10':'V', '11':'X', '12':'Z'}
@@ -500,15 +506,45 @@ class Stock(callbacks.Plugin):
                 mon = now + datetime.timedelta(days=40)
             else:  # 20th and before.
                 mon = now + datetime.timedelta(days=30)
+            # CONSTRUCT SYMBOL: table prefix + month code (letter) + YR + exchange suffix.
+            contract = "{0}{1}{2}.{3}".format(table[symbol][0], months[str(mon.month)], mon.strftime("%y"), table[symbol][1])
         # palladium, copper, platinum, silver, palladium
         elif symbol in ['gold', 'silver', 'palladium', 'platinum', 'copper']:
             if now.day > 25:  # past 26th of the month.
                 mon = now + datetime.timedelta(days=30)
             else:
                 mon = now
-        # CONSTRUCT SYMBOL: table prefix + month code (letter) + YR + exchange suffix.
-        contract = "{0}{1}{2}.{3}".format(table[symbol][0], months[str(mon.month)], mon.strftime("%y"), table[symbol][1])
+            # CONSTRUCT SYMBOL: table prefix + month code (letter) + YR + exchange suffix.
+            contract = "{0}{1}{2}.{3}".format(table[symbol][0], months[str(mon.month)], mon.strftime("%y"), table[symbol][1])
+        # grains but only corn, oats, rice.
+        elif symbol in ['corn', 'oats', 'rice']:
+            # we have a specific table for these grains
+            months = {'1':'H', '2':'H', '3':'H', '4':'K',
+                      '5':'K', '6':'N', '7':'N', '8':'U',
+                      '9':'U', '10':'Z', '11':'Z', '12':'Z'}
+            if now.day > 13:  # past 26th of the month.
+                mon = now + datetime.timedelta(days=30)
+            else:
+                mon = now
+            # CONSTRUCT SYMBOL: table prefix + month code (letter) + YR + exchange suffix.
+            contract = "{0}{1}{2}.{3}".format(table[symbol][0], months[str(mon.month)], mon.strftime("%y"), table[symbol][1])
+        # finally, return contract.
         return contract
+
+    def grains(self, irc, msg, args):
+        """
+        Display the latest quote for grains (corn, oats, rice).
+        """
+
+        for symbol in ['corn', 'oats', 'rice']:
+            symbol = self._futuresymbol(symbol)  # grab the proper symbol.
+            output = self._yahooquote(symbol)
+            if not output:  # if not yahoo, report error.
+                irc.reply("ERROR: I could not fetch a quote for: {0}. Check that the symbol is correct.".format(symbol))
+            else:
+                irc.reply(output)
+
+    grains = wrap(grains)
 
     def oil(self, irc, msg, args):
         """
