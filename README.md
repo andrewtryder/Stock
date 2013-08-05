@@ -29,3 +29,4 @@ Notes
 
     If you ran this plugin from the past, I had a much more comprehensive quant/info getopts for Yahoo.
     I found nobody was using this, so I removed.
+
