@@ -13,6 +13,8 @@ except ImportError:
     import xml.etree.ElementTree as ElementTree
 import datetime  # futures math.
 import pytz  # tzconv for relativetime.
+# extra supybot libs
+import supybot.ircmsgs as ircmsgs
 # supybot libs.
 import supybot.utils as utils
 from supybot.commands import *
@@ -82,6 +84,19 @@ class Stock(callbacks.Plugin):
         except utils.web.Error as e:
             self.log.error("I could not open {0} error: {1}".format(url, e))
             return None
+
+    def _out(self, irc, msg, txt):
+        """Handle output."""
+
+        # check if we should msg users for this channel
+        if ircmsgs.isChannel(msg.args[0]):
+            if self.registryValue('msgUsersOutput', msg.args[0]):# we're in a channel and True.
+                irc.sendMsg(ircmsgs.privmsg(msg.nick, txt))  # send text to user.
+            else:  # setting is off or not on a channel with it on.
+                irc.sendMsg(ircmsgs.privmsg(msg.args[0], txt))
+        else:  # in a privmsg.
+            irc.sendMsg(ircmsgs.privmsg(msg.nick, txt))
+
 
     ########################
     # COLOR AND FORMATTING #
@@ -220,7 +235,7 @@ class Stock(callbacks.Plugin):
     # GOOGLE PUBLIC FUNCTIONS #
     ###########################
 
-    def googlequote(self, irc, msgs, args, optsymbols):
+    def googlequote(self, irc, msg, args, optsymbols):
         """<symbols>
 
         Display's a quote from Google for a stock.
@@ -233,9 +248,9 @@ class Stock(callbacks.Plugin):
         for symbol in symbols[0:5]:  # max 5.
             output = self._googlequote(symbol)
             if output:  # if we get a quote back.
-                irc.reply(output)
+                self._out(irc, msg, output)
             else:  # something went wrong looking up quote.
-                irc.reply("ERROR fetching Google quote for: {0}. Unknown symbol?".format(symbol))
+                self._out(irc, msg, "ERROR fetching Google quote for: {0}. Unknown symbol?".format(symbol))
 
     googlequote = wrap(googlequote, ['text'])
 
@@ -248,9 +263,9 @@ class Stock(callbacks.Plugin):
         for index in indices:  # iterate through quotes above.
             output = self._googlequote(index)
             if output:  # if we get a quote back.
-                irc.reply(output)
+                self._out(irc, msg, output)
             else:  # if something breaks.
-                irc.reply("ERROR fetching Google quote for: {0}".format(index))
+                self._out(irc, msg, "ERROR fetching Google quote for: {0}".format(index))
 
     intlindices = wrap(intlindices)
 
@@ -264,9 +279,9 @@ class Stock(callbacks.Plugin):
         for index in indices:  # iterate through quotes above.
             output = self._googlequote(index)
             if output:  # if we get a quote back.
-                irc.reply(output)
+                self._out(irc, msg, output)
             else:  # if something breaks.
-                irc.reply("ERROR fetching Google quote for: {0}".format(index))
+                self._out(irc, msg, "ERROR fetching Google quote for: {0}".format(index))
 
     indices = wrap(indices)
 
@@ -404,13 +419,13 @@ class Stock(callbacks.Plugin):
         for symbol in symbols[0:5]:  # limit on 5.
             output = self._yahooquote(symbol)
             if output:  # if we have output.
-                irc.reply(output)
+                self._out(irc, msg, output)
             else:  # if we don't have output.
-                irc.reply("ERROR fetching Yahoo quote for: {0}".format(symbol))
+                self._out(irc, msg, "ERROR fetching Yahoo quote for: {0}".format(symbol))
 
     yahooquote = wrap(yahooquote, ['text'])
 
-    def bonds(self, irc, msgs, args):
+    def bonds(self, irc, msg, args):
         """
         Displays the US Treasury Bonds Rates.
         """
@@ -419,9 +434,9 @@ class Stock(callbacks.Plugin):
         for index in indices:  # iterate through quotes above.
             output = self._yahooquote(index)
             if output:  # if we get a quote back.
-                irc.reply(output)
+                self._out(irc, msg, output)
             else:  # if something breaks.
-                irc.reply("ERROR fetching Google quote for: {0}".format(index))
+                self._out(irc, msg, "ERROR fetching Google quote for: {0}".format(index))
 
     bonds = wrap(bonds)
 
@@ -439,9 +454,9 @@ class Stock(callbacks.Plugin):
         for symbol in symbols[0:5]:  # limit on 5.
             output = self._yahoocurrency(symbol)
             if output:  # if we have output.
-                irc.reply(output)
+                self._out(irc, msg, output)
             else:  # if we don't have output.
-                irc.reply("ERROR fetching Yahoo currency for: {0}".format(symbol))
+                self._out(irc, msg, "ERROR fetching Yahoo currency for: {0}".format(symbol))
 
     currency = wrap(currency, ['text'])
 
@@ -465,10 +480,10 @@ class Stock(callbacks.Plugin):
             if not output:  # if we don't, try yahoo.
                 output = self._yahooquote(symbol)
                 if not output:  # if not yahoo, report error.
-                    irc.reply("ERROR: I could not fetch a quote for: {0}. Check that the symbol is correct.".format(symbol))
-                    return
+                    self._out(irc, msg, "ERROR: I could not fetch a quote for: {0}. Check that the symbol is correct.".format(symbol))
+                    continue
             # we'll be here if one of the quotes works. output.
-            irc.reply(output)
+            self._out(irc, msg, output)
 
     quote = wrap(quote, [('text')])
 
@@ -550,9 +565,9 @@ class Stock(callbacks.Plugin):
             symbol = self._futuresymbol(symbol)  # grab the proper symbol.
             output = self._yahooquote(symbol)
             if not output:  # if not yahoo, report error.
-                irc.reply("ERROR: I could not fetch a quote for: {0}. Check that the symbol is correct.".format(symbol))
+                self._out(irc, msg, "ERROR: I could not fetch a quote for: {0}. Check that the symbol is correct.".format(symbol))
             else:
-                irc.reply(output)
+                self._out(irc, msg, output)
 
     grains = wrap(grains)
 
@@ -564,9 +579,9 @@ class Stock(callbacks.Plugin):
         symbol = self._futuresymbol('oil')  # get oil symbol.
         output = self._yahooquote(symbol)
         if not output:  # if not yahoo, report error.
-            irc.reply("ERROR: I could not fetch a quote for: {0}. Check that the symbol is correct.".format(symbol))
+            self._out(irc, msg, "ERROR: I could not fetch a quote for: {0}. Check that the symbol is correct.".format(symbol))
         else:
-            irc.reply(output)
+            self._out(irc, msg, output)
 
     oil = wrap(oil)
 
@@ -578,9 +593,9 @@ class Stock(callbacks.Plugin):
         symbol = self._futuresymbol('gold')  # get gold symbol.
         output = self._yahooquote(symbol)
         if not output:  # if not yahoo, report error.
-            irc.reply("ERROR: I could not fetch a quote for: {0}. Check that the symbol is correct.".format(symbol))
+            self._out(irc, msg, "ERROR: I could not fetch a quote for: {0}. Check that the symbol is correct.".format(symbol))
         else:
-            irc.reply(output)
+            self._out(irc, msg, output)
 
     gold = wrap(gold)
 
@@ -594,9 +609,9 @@ class Stock(callbacks.Plugin):
             symbol = self._futuresymbol(symbol)
             output = self._yahooquote(symbol)
             if not output:  # if not yahoo, report error.
-                irc.reply("ERROR: I could not fetch a quote for: {0}. Check that the symbol is correct.".format(symbol))
+                self._out(irc, msg, "ERROR: I could not fetch a quote for: {0}. Check that the symbol is correct.".format(symbol))
             else:
-                irc.reply(output)
+                self._out(irc, msg, output)
 
     metals = wrap(metals)
 
@@ -636,7 +651,7 @@ class Stock(callbacks.Plugin):
 
         results = self._companylookup(optinput)
         if not results:  # if we don't have any results.
-            irc.reply("ERROR: I did not find any symbols for: {0}".format(optinput))
+            self._out(irc, msg, "ERROR: I did not find any symbols for: {0}".format(optinput))
             return
         # now iterate over and output each symbol/result.
         for r in results:
@@ -645,7 +660,8 @@ class Stock(callbacks.Plugin):
             exch = r.get('exch')
             name = r.get('name')
             if symbol and typeDisp and exch and name:  # have to have all. display in a table.
-                irc.reply("{0:15} {1:12} {2:5} {3:40}".format(symbol, typeDisp, exch, name))
+                output = "{0:15} {1:12} {2:5} {3:40}".format(symbol, typeDisp, exch, name)
+                self._out(irc, msg, output)
 
     symbolsearch = wrap(symbolsearch, ['text'])
 

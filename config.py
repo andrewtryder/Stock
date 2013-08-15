@@ -16,6 +16,7 @@ def configure(advanced):
 
 
 Stock = conf.registerPlugin('Stock')
+conf.registerChannelValue(Stock, 'msgUsersOutput', registry.Boolean(False, """Message users in specific channel all output?"""))
 
 
 # vim:set shiftwidth=4 softtabstop=4 expandtab textwidth=179:
