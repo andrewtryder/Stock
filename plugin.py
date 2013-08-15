@@ -269,7 +269,7 @@ class Stock(callbacks.Plugin):
 
     intlindices = wrap(intlindices)
 
-    def indices(self, irc, msgs, args):
+    def indices(self, irc, msg, args):
         """
         Displays the three major indices for the US Stock Market:
         Dow Jones Industrial Average, NASDAQ, and S&P500
