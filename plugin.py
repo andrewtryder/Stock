@@ -79,7 +79,8 @@ class Stock(callbacks.Plugin):
             if h and d:
                 page = utils.web.getUrl(url, headers=h, data=d)
             else:
-                page = utils.web.getUrl(url)
+                h = {"User-Agent":"Mozilla/5.0 (X11; Ubuntu; Linux i686; rv:17.0) Gecko/20100101 Firefox/17.0"}
+                page = utils.web.getUrl(url, headers=h)
             return page
         except utils.web.Error as e:
             self.log.error("I could not open {0} error: {1}".format(url, e))
@@ -139,14 +140,12 @@ class Stock(callbacks.Plugin):
         return ircutils.bold(ircutils.underline(string))
 
     #####################################
-    # REDUNDANT GOOGLE INTERNAL FETCHER #
+    # GOOGLE FUNCTIONS - used ig before #
     # (later if initial breaks?) Code   #
     # from QSB - http://bit.ly/110PRAf  #
     #####################################
-    # KEPT FOR FUTURE USAGE             #
-    #####################################
 
-    def XEncodeReplace(self, match_object):
+    def _XEncodeReplace(self, match_object):
         """Convert \\xnn encoded characters.
 
         Converts \\xnn encoded characters into their Unicode equivalent.
@@ -160,13 +159,16 @@ class Stock(callbacks.Plugin):
         otherwise the match string unchanged.
         """
 
-        char_num_string = match_object.group(1)
-        char_num = int(char_num_string, 16)
-        replacement = chr(char_num)
-        return replacement
+        try:
+            char_num_string = match_object.group(1)
+            char_num = int(char_num_string, 16)
+            replacement = chr(char_num)
+            return replacement
+        except:
+            return match_object
 
-    def _googlequote2(self, symbol):
-        """This uses a JSONP-like url from Google to return a stock Quote."""
+    def _googlequote(self, symbol):
+        """This uses a JSONP-like url from Google to return a stock Quote. (From QSB)"""
 
         # build url.
         url = 'https://www.google.com/finance/info?infotype=infoquoteall&q='
@@ -174,62 +176,85 @@ class Stock(callbacks.Plugin):
         # process "JSON".
         html = self._httpget(url)
         if not html:
+            self.log.error("_googlequote: Failed on Google Quote for {0}".format(symbol))
             return None
         # \xnn problems.
         pattern = re.compile('\\\\x(\d{2})')
         # dict container for output.
-        quote_dict = {}
+        e = {}
         # iterate over each line. have to split on \n because html = str object.
         for line in html.split('\n'):  # splitlines() ?
             line = line.rstrip('\n')
-            line_parts = line.split(':')
+            line_parts = line.split(': ')
             if len(line_parts) == 2:
-                key, value = line_parts
-                key = key.strip('" ,')
-                # Perform the \xnn replacements here.
-                value = pattern.sub(XEncodeReplace, value)
-                value = value.strip('" ')
-                if key and value:
-                    quote_dict[key] = value
-        # return quote.
-        return quote_dict
-
-    ####################
-    # GOOGLE FUNCTIONS #
-    ####################
-
-    def _googlequote(self, symbol):
-        """Return quote for symbol from Google. Returns None if something breaks."""
-
-        # build and fetch url.
-        url = "http://www.google.com/ig/api?stock=%s" % utils.web.urlquote(symbol)
-        html = self._httpget(url)
-        if not html:
-            self.log.error("_googlequote: Failed on Google Quote for {0}".format(symbol))
-            return None
-        # process XML.
-        document = ElementTree.fromstring(html.decode('utf-8'))
-        if document.findall(".//no_data_message"):
-            self.log.error("Error looking up symbol: {0}. Unknown symbol?".format(symbol))
-            return None
-        # dict for output. create k/v based on stuff in finance.
-        e = {}
-        for elem in document.find('finance'):
-            e[elem.tag] = elem.get('data')
+                key, value = line_parts  # list back to string.
+                key = key.replace(',"', '').replace('"','').strip()  # clean up key.
+                value = value.replace('"', '')  # clean up value.
+                value = pattern.sub(self._XEncodeReplace, value)  # Perform the \xnn replacements here.
+                if (key and value and value != ""):  # if we still have, inject.
+                    e[key] = value
         # with dict above, we construct a string conditionally.
-        output = "{0} ({1})".format(self._bu(e['symbol']), self._bold(e['company']))
-        if e['last']:  # bold last.
-            output += "  last: {0}".format(self._bold(e['last']))
-        if e['change'] and e['perc_change']:  # color percent changes.
-            output += u" {0} ({1})".format(self._colorify(e['change']), self._colorify(e['perc_change'], perc=True))
-        if e['low'] and e['high']:  # bold low and high daily ranges.
-            output += "  Daily range:({0}-{1})".format(self._bold(e['low']),self._bold(e['high']))
-        if e['volume'] and e['volume'] != "0":  # if we have volume, millify+orange.
-            output += "  Volume: {0}".format(self._orange(self._millify(float(e['volume']))))
-        if e['trade_timestamp']:  # last trade.
-            output += "  Last trade: {0}".format(self._blue(e['trade_timestamp']))
+        # {'c': '-6.77', 'ccol': 'chr', 'e': 'INDEXSP', 'name': 'S&P 500', 'lo': '1,755.72', 'lo52': '1,343.35',
+        # 'l': '1,756.54', 'vo': '624.29M', 's': '0', 'lt': 'Oct 31, 4:30PM EDT', 't': '.INX', 'hi52': '1,775.22',
+        # 'hi': '1,768.53', 'cp': '-0.38', 'type': 'Company', 'id': '626307', 'l_cur': '1,756.54', 'op': '1,763.24'}
+        # {'el': '22.56', 'eccol': 'chr', 'ec': '-0.01', 'vo': '33.24M', 'eps': '1.86', 'inst_own': '75%', 'cp': '0.02',
+        # CSCO
+        # 'id': '99624', 'hi52': '26.49', 'lo': '22.40', 'yld': '3.01', 'shares': '5.38B', 'avvo': '39.16M',
+        # 'lt': 'Nov 1, 4:00PM EDT', 'pe': '12.13', 'type': 'Company', 'elt': 'Nov 1, 4:43PM EDT',
+        # 'beta': '1.26', 'hi': '22.68', 'ecp': '-0.02', 'l_cur': '22.56', 'c': '+0.01', 'e': 'NASDAQ',
+        # 'name': 'Cisco Systems, Inc.', 'mc': '121.50B', 'lo52': '16.68', 'l': '22.57', 's': '2', 't': 'CSCO',
+        # 'el_cur': '22.56', 'div': '0.17', 'ccol': 'chg', 'op': '22.66'}
+        #The feed can return some or all of the following
+        #keys:
+        #
+        #  avvo    * Average volume (float with multiplier, like '3.54M')
+        #  beta    * Beta (float)
+        #  c       * Amount of change while open (float)
+        #  ccol    * (unknown) (chars)
+        #  cl        Last perc. change
+        #  cp      * Change perc. while open (float)
+        #  e       * Exchange (text, like 'NASDAQ')
+        #  ec      * After hours last change from close (float)
+        #  eccol   * (unknown) (chars)
+        #  ecp     * After hours last chage perc. from close (float)
+        #  el      * After. hours last quote (float)
+        #  el_cur  * (unknown) (float)
+        #  elt       After hours last quote time (unknown)
+        #  eo      * Exchange Open (0 or 1)
+        #  eps     * Earnings per share (float)
+        #  fwpe      Forward PE ratio (float)
+        #  hi      * Price high (float)
+        #  hi52    * 52 weeks high (float)
+        #  id      * Company id (identifying number)
+        #  l       * Last value while open (float)
+        #  l_cur   * Last value at close (like 'l')
+        #  lo      * Price low (float)
+        #  lo52    * 52 weeks low (float)
+        #  lt        Last value date/time
+        #  ltt       Last trade time (Same as "lt" without the data)
+        #  mc      * Market cap. (float with multiplier, like '123.45B')
+        #  name    * Company name (text)
+        #  op      * Open price (float)
+        #  pe      * PE ratio (float)
+        #  t       * Ticker (text)
+        #  type    * Type (i.e. 'Company')
+        #  vo      * Volume (float with multiplier, like '3.54M')
+
+        output = "{0} ({1})".format(self._bu(e['t']), self._bold(e['name']))
+        if 'l' in e:  # bold last.
+            output += "  last: {0}".format(self._bold(e['l']))
+        if ('c' in e and 'cp' in e):  # color percent changes.
+            output += u" {0} ({1})".format(self._colorify(e['c']), self._colorify(e['cp'], perc=True))
+        if ('lo' in e and 'hi' in e):  # bold low and high daily ranges.
+            output += "  Daily range:({0}-{1})".format(self._bold(e['lo']),self._bold(e['hi']))
+        if ('lo52' in e and e['lo52'] != "0" and 'hi52' in e and e['hi52'] != "0"):
+            output += "  Yearly range:({0}-{1})".format(self._bold(e['lo52']),self._bold(e['hi52']))
+        if ('vo' in e and e['vo'] != "0"):  # if we have volume, millify+orange.
+            output += "  Volume: {0}".format(self._orange(e['vo']))
+        if 'lt' in e:  # last trade.
+            output += "  Last trade: {0}".format(self._blue(e['lt']))
         # now return the string.
-        return output.encode('utf-8')
+        return output
 
     ###########################
     # GOOGLE PUBLIC FUNCTIONS #
