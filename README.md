@@ -20,10 +20,8 @@ History
 Instructions
 
     No setup. Should work fine out of a 2.6+ setup.
-    I suggest adding an alias from quote to stock:
 
-    /msg <bot> Alias add stock quote
-
+    I used to call the main command "quote". It is now called "stock"
 
 Notes
 

@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 ###
-# Copyright (c) 2013, spline
+# Copyright (c) 2013-2014, spline
 # All rights reserved.
 ###
 # my libs
@@ -489,7 +489,7 @@ class Stock(callbacks.Plugin):
     # PUBLIC STOCK FRONTEND #
     #########################
 
-    def quote(self, irc, msg, args, optsymbols):
+    def stock(self, irc, msg, args, optsymbols):
         """<ticker symbol(s)>
 
         Returns stock information about <ticker>.
@@ -510,7 +510,7 @@ class Stock(callbacks.Plugin):
             # we'll be here if one of the quotes works. output.
             self._out(irc, msg, output)
 
-    quote = wrap(quote, [('text')])
+    stock = wrap(stock, [('text')])
 
     ##########################################
     # FUTURES CONTRACTS INTERNAL/PUBLIC FUNC #
