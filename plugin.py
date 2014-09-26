@@ -664,8 +664,9 @@ class Stock(callbacks.Plugin):
         results = data["ResultSet"]["Result"]
         if len (results) == 0:  # if we have no results, err.
             return None
-        else:  # otherwise, return results.
-            return results.encode('utf-8')
+        else:  # otherwise, return results. It's a list of dicts.
+            # {u'typeDisp': u'Equity', u'name': u'Alcoa Inc.', u'symbol': u'AA', u'exchDisp': u'NYSE', u'type': u'S', u'exch': u'NYQ'}
+            return results
 
     def symbolsearch(self, irc, msg, args, optinput):
         """<company name>
@@ -678,15 +679,19 @@ class Stock(callbacks.Plugin):
         if not results:  # if we don't have any results.
             self._out(irc, msg, "ERROR: I did not find any symbols for: {0}".format(optinput))
             return
+        # container for out.
+        output = []
         # now iterate over and output each symbol/result.
-        for r in results:
-            symbol = r.get('symbol')
-            typeDisp = r.get('typeDisp')
-            exch = r.get('exch')
-            name = r.get('name')
+        for r in results[0:5]:
+            symbol = r.get('symbol').encode('utf-8')
+            typeDisp = r.get('typeDisp').encode('utf-8')
+            exch = r.get('exch').encode('utf-8')
+            name = r.get('name').encode('utf-8')
             if symbol and typeDisp and exch and name:  # have to have all. display in a table.
-                output = "{0:15} {1:12} {2:5} {3:40}".format(symbol, typeDisp, exch, name)
-                self._out(irc, msg, output)
+                #output.append("{0:15} {1:12} {2:5} {3:40}".format(symbol, typeDisp, exch, name))
+                output.append("{0} ({1}) {2} {3}".format(symbol, typeDisp, exch, name))
+        # output as single line
+        self._out(irc, msg, " | ".join(output))
 
     symbolsearch = wrap(symbolsearch, ['text'])
 
