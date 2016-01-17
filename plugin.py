@@ -240,7 +240,7 @@ class Stock(callbacks.Plugin):
         #  type    * Type (i.e. 'Company')
         #  vo      * Volume (float with multiplier, like '3.54M')
 
-        output = "{0} ({1})".format(self._bu(e['t']), self._bold(e['name'].replace('\u0027', "'")))
+        output = "{0} ({1})".format(self._bu(e['t']), self._bold(e['name'].replace('\u0027', "'").replace('\u0026', "&")))
         if 'l' in e:  # bold last.
             output += "  last: {0}".format(self._bold(e['l']))
         if ('c' in e and 'cp' in e):  # color percent changes.
